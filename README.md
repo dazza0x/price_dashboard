@@ -69,3 +69,10 @@ The Service Sales by Team Member report includes an overall service summary befo
 
 ## Staff list filter (optional)
 Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboard. The app keeps only rows where **Salon** matches the selected salon and **Type = Stylist**. This filter is applied to volumes and scenario outputs.
+
+
+## v8 UX updates
+- Reset scenario resets global controls and tables.
+- Scenario controls table is collapsible.
+- Scenario table includes filters and a filtered export sheet.
+- Profit impact KPI shows Before → After and delta.

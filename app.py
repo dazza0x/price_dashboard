@@ -65,11 +65,11 @@ with st.sidebar:
 
     st.divider()
     st.header("Global scenario")
-    price_mode = st.selectbox("Price adjustment mode", ["Percent", "Add £"], index=0)
-    price_adj = st.number_input("Price adjustment", value=0.0, step=0.5)
+    price_mode = st.selectbox("Price adjustment mode", ["Percent", "Add £"], index=0, key="global_price_mode")
+    price_adj = st.number_input("Price adjustment", value=0.0, step=0.5, key="global_price_adj")
 
-    cost_mode = st.selectbox("Per Service adjustment mode", ["Percent", "Add £"], index=0)
-    cost_adj = st.number_input("Per Service adjustment", value=0.0, step=0.5)
+    cost_mode = st.selectbox("Per Service adjustment mode", ["Percent", "Add £"], index=0, key="global_cost_mode")
+    cost_adj = st.number_input("Per Service adjustment", value=0.0, step=0.5, key="global_cost_adj")
 
     st.divider()
     if st.button("Reset scenario"):
@@ -113,12 +113,14 @@ default_stylist_controls = pd.DataFrame({
 if "stylist_controls" not in st.session_state:
     st.session_state["stylist_controls"] = default_stylist_controls
 
-st.session_state["stylist_controls"] = st.data_editor(
-    st.session_state["stylist_controls"],
-    use_container_width=True,
-    hide_index=True,
-    key="stylist_controls_editor",
-)
+
+with st.expander("Scenario controls — by stylist", expanded=True):
+    st.session_state["stylist_controls"] = st.data_editor(
+        st.session_state["stylist_controls"],
+        use_container_width=True,
+        hide_index=True,
+        key="stylist_controls_editor",
+    )
 
 # --- Service overrides table (optional) ---
 services = sorted(base_long["Services"].dropna().astype(str).unique())
@@ -154,6 +156,31 @@ result = apply_scenario(
     service_overrides=st.session_state["service_overrides"],
 )
 
+# Baseline (Before) — no adjustments, no overrides
+baseline_scenario = {
+    "global_price_mode": "Percent",
+    "global_price_adj": 0.0,
+    "global_cost_mode": "Percent",
+    "global_cost_adj": 0.0,
+}
+baseline_controls = st.session_state["stylist_controls"].copy()
+for c in ["Price %", "Price £", "Cost %", "Cost £"]:
+    if c in baseline_controls.columns:
+        baseline_controls[c] = 0.0
+
+baseline_overrides = st.session_state["service_overrides"].copy()
+for c in ["Override Price", "Override Per Service"]:
+    if c in baseline_overrides.columns:
+        baseline_overrides[c] = np.nan
+
+baseline_result = apply_scenario(
+    base_long=base_long,
+    scenario=baseline_scenario,
+    stylist_controls=baseline_controls,
+    service_overrides=baseline_overrides,
+)
+
+
 # --- KPIs ---
 st.subheader("Outputs")
 col1, col2, col3, col4 = st.columns(4)
@@ -161,8 +188,10 @@ col1.metric("Rows", f"{len(result):,}")
 col2.metric("Services", f"{result['Services'].nunique():,}")
 col3.metric("Stylists", f"{result['Stylist'].nunique():,}")
 
-total_profit = result["Weighted Difference"].sum() if "Weighted Difference" in result.columns else result["Difference"].sum()
-col4.metric("Total profit impact", f"£{total_profit:,.2f}")
+after_profit = result["Weighted Difference"].sum() if "Weighted Difference" in result.columns else result["Difference"].sum()
+before_profit = baseline_result["Weighted Difference"].sum() if "Weighted Difference" in baseline_result.columns else baseline_result["Difference"].sum()
+delta_profit = after_profit - before_profit
+col4.metric("Profit impact (Before → After)", f"£{before_profit:,.2f} → £{after_profit:,.2f}", delta=f"£{delta_profit:,.2f}")
 
 # --- Validation panels ---
 with st.expander("Validation checks"):
@@ -188,14 +217,52 @@ with st.expander("Validation checks"):
         st.info("No volumes file uploaded; weighted checks disabled.")
 
 # --- Result table ---
+
 st.subheader("Scenario table")
-st.dataframe(result, use_container_width=True, height=520)
+
+# --- Filters (view only) ---
+filtered = result.copy()
+
+with st.expander("Filters", expanded=False):
+    svc_all = sorted(filtered["Services"].dropna().astype(str).unique())
+    sty_all = sorted(filtered["Stylist"].dropna().astype(str).unique())
+
+    sel_services = st.multiselect("Services", svc_all, default=svc_all)
+    sel_stylists = st.multiselect("Stylist", sty_all, default=sty_all)
+
+    filtered = filtered[filtered["Services"].astype(str).isin(sel_services)]
+    filtered = filtered[filtered["Stylist"].astype(str).isin(sel_stylists)]
+
+    if "Qty" in filtered.columns:
+        hide_zero_qty = st.checkbox("Hide rows with Qty = 0", value=True)
+        if hide_zero_qty:
+            filtered = filtered[filtered["Qty"] != 0]
+
+    hide_missing_cost = st.checkbox("Hide rows with missing Per Service", value=True)
+    if hide_missing_cost:
+        filtered = filtered[filtered["Per Service"].notna()]
+
+    if "Qty" in filtered.columns and len(filtered):
+        qmin, qmax = int(filtered["Qty"].min()), int(filtered["Qty"].max())
+        q_range = st.slider("Qty range", min_value=qmin, max_value=qmax, value=(qmin, qmax))
+        filtered = filtered[(filtered["Qty"] >= q_range[0]) & (filtered["Qty"] <= q_range[1])]
+
+    if len(filtered) and filtered["Per Service"].notna().any():
+        cmin = float(filtered["Per Service"].min())
+        cmax = float(filtered["Per Service"].max())
+        c_range = st.slider("Per Service range", min_value=cmin, max_value=cmax, value=(cmin, cmax))
+        filtered = filtered[(filtered["Per Service"] >= c_range[0]) & (filtered["Per Service"] <= c_range[1])]
+
+st.caption(f"Showing {len(filtered):,} / {len(result):,} rows after filters.")
+st.dataframe(filtered, use_container_width=True, height=520)
+
 
 # --- Export ---
 st.subheader("Download")
 out = io.BytesIO()
 with pd.ExcelWriter(out, engine="openpyxl") as writer:
     result.to_excel(writer, index=False, sheet_name="Scenario Output")
+    filtered.to_excel(writer, index=False, sheet_name="Filtered View")
     st.session_state["stylist_controls"].to_excel(writer, index=False, sheet_name="Stylist Controls")
     st.session_state["service_overrides"].to_excel(writer, index=False, sheet_name="Service Overrides")
     price_matrix.to_excel(writer, index=False, sheet_name="Input_StylistPrices")
