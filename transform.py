@@ -110,16 +110,14 @@ def load_optional_qty(file) -> pd.DataFrame:
 
     Accepts either:
       A) Simple table with columns: Stylist, Description/Services, Qty
-      B) A 'Service Sales by Team Member' style report (.xls/.xlsx), where stylist names appear as header rows and
-         service lines carry Qty.
+      B) A 'Service Sales by Team Member' style report (.xls/.xlsx)
 
-    Output columns: Stylist, Services, Qty
+    Output columns: Stylist, Services, Qty (aggregated)
     """
-    # Try read all sheets; if it's the Service Sales report, the sheet often is "Service Sales by Team Mem"
     xls = pd.ExcelFile(file)
     sheet_candidates = xls.sheet_names
 
-    # First: try simple-table read from first sheet
+    # --- Try simple table first (first sheet) ---
     df0 = pd.read_excel(file, sheet_name=sheet_candidates[0])
 
     stylist_col = _pick(df0.columns, ["Stylist", "Team Member", "TeamMember"])
@@ -132,21 +130,17 @@ def load_optional_qty(file) -> pd.DataFrame:
         out["Stylist"] = out["Stylist"].astype(str).str.strip()
         out["Services"] = out["Services"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
         out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
-        out = out[out["Services"].notna()].copy()
+        out = out[(out["Services"].notna()) & (out["Services"].astype(str).str.strip() != "")]
+        out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
         return out.reset_index(drop=True)
 
-    # Second: attempt to parse Service Sales by Team Member report
+    # --- Parse Service Sales by Team Member report ---
     ss_sheet = None
     for s in sheet_candidates:
-        if "service sales" in s.lower():
+        sl = s.lower()
+        if "service sales" in sl or "team mem" in sl:
             ss_sheet = s
             break
-    if ss_sheet is None:
-        # try any sheet that looks like it includes "Team Mem"
-        for s in sheet_candidates:
-            if "team mem" in s.lower():
-                ss_sheet = s
-                break
     if ss_sheet is None:
         raise ValueError(
             f"Volumes file must include Stylist + Description/Services + Qty, OR be a Service Sales report. "
@@ -159,7 +153,7 @@ def load_optional_qty(file) -> pd.DataFrame:
     header_i = -1
     for i in range(len(raw)):
         row = [str(x).strip().lower() for x in raw.iloc[i].tolist()]
-        if "description" in row and any(x in ("qty", "quantity") for x in row):
+        if "description" in row and ("qty" in row or "quantity" in row):
             header_i = i
             break
     if header_i < 0:
@@ -178,16 +172,23 @@ def load_optional_qty(file) -> pd.DataFrame:
     df.columns = ["Description", "Qty"]
 
     df["Description"] = df["Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+    # Drop blank descriptions
+    df = df[df["Description"].notna()].copy()
+    df = df[df["Description"].astype(str).str.strip() != ""].copy()
+
+    # Drop known non-service / totals rows
+    drop_desc = {"grand total", "hair", "treatment", "inspired hair supplies"}
+    df = df[~df["Description"].str.lower().isin(drop_desc)].copy()
+
+    # Qty numeric (blank => NaN)
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
 
-    # Remove obvious section labels if present
-    df = df[df["Description"].notna()].copy()
-    df = df[~df["Description"].isin(["Hair", "Treatment"])].copy()
-
-    # Stylist rows are those with Qty null; services rows have Qty
+    # In this report format, stylist rows often have Qty blank and sit *below* their service lines.
+    # PowerQuery used FillUp; pandas equivalent is bfill.
     df["Stylist"] = np.where(df["Qty"].isna(), df["Description"], np.nan)
-    df["Stylist"] = df["Stylist"].ffill()
+    df["Stylist"] = df["Stylist"].bfill()
 
+    # Keep only service rows (those with Qty)
     df = df[df["Qty"].notna()].copy()
     df["Qty"] = df["Qty"].fillna(0).astype(int)
     df.rename(columns={"Description": "Services"}, inplace=True)
@@ -196,7 +197,11 @@ def load_optional_qty(file) -> pd.DataFrame:
     out["Stylist"] = out["Stylist"].astype(str).str.strip()
     out["Services"] = out["Services"].astype(str).str.strip()
 
-    # Aggregate in case of duplicates
+    # Drop any residual blanks
+    out = out[(out["Stylist"] != "") & (out["Stylist"].str.lower() != "nan")]
+    out = out[(out["Services"] != "") & (out["Services"].str.lower() != "nan")]
+
+    # Aggregate duplicates
     out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
     return out.reset_index(drop=True)
 

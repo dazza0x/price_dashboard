@@ -57,3 +57,7 @@ The app drops non-service rows such as **Online Booking / Bookable Online** and 
 
 ## Stylist price fallback
 If a stylist-specific price is **blank or zero**, the **Default Price** is automatically used.
+
+
+## Volumes parsing
+If you upload the **Service Sales by Team Member** report, the parser uses a FillUp-style logic (bfill) and drops **Grand Total**.
