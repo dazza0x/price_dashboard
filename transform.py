@@ -131,6 +131,7 @@ def load_optional_qty(file) -> pd.DataFrame:
         out["Services"] = out["Services"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
         out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
         out = out[(out["Services"].notna()) & (out["Services"].astype(str).str.strip() != "")]
+        out = out[(out["Stylist"].notna()) & (out["Stylist"].astype(str).str.strip() != "")]
         out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
         return out.reset_index(drop=True)
 
@@ -171,25 +172,32 @@ def load_optional_qty(file) -> pd.DataFrame:
     df = df[[desc, qty]].copy()
     df.columns = ["Description", "Qty"]
 
-    df["Description"] = df["Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
-    # Drop blank descriptions
-    df = df[df["Description"].notna()].copy()
-    df = df[df["Description"].astype(str).str.strip() != ""].copy()
-
-    # Drop known non-service / totals rows
-    drop_desc = {"grand total", "hair", "treatment", "inspired hair supplies"}
-    df = df[~df["Description"].str.lower().isin(drop_desc)].copy()
+    # Clean description: turn 'nan'/blank into real NaN
+    desc_clean = (
+        df["Description"]
+        .astype(str)
+        .str.replace("\u00a0"," ", regex=False)
+        .str.strip()
+        .replace({"nan": np.nan, "None": np.nan, "": np.nan})
+    )
+    df["Description"] = desc_clean
 
     # Qty numeric (blank => NaN)
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
 
-    # In this report format, stylist rows often have Qty blank and sit *below* their service lines.
-    # PowerQuery used FillUp; pandas equivalent is bfill.
-    df["Stylist"] = np.where(df["Qty"].isna(), df["Description"], np.nan)
-    df["Stylist"] = df["Stylist"].bfill()
+    # Drop known non-service / totals rows
+    drop_desc = {"grand total", "hair", "treatment", "inspired hair supplies"}
+    df = df[~df["Description"].fillna("").str.lower().isin(drop_desc)].copy()
 
-    # Keep only service rows (those with Qty)
+    # Stylist rows are those with Qty null and Description present; services rows have Qty.
+    # In this report format, stylist header sits ABOVE their service rows, so use ffill.
+    df["Stylist"] = np.where(df["Qty"].isna() & df["Description"].notna(), df["Description"], np.nan)
+    df["Stylist"] = df["Stylist"].ffill()
+
+    # Keep only service rows (those with Qty) AND with an assigned Stylist
     df = df[df["Qty"].notna()].copy()
+    df = df[df["Stylist"].notna()].copy()
+
     df["Qty"] = df["Qty"].fillna(0).astype(int)
     df.rename(columns={"Description": "Services"}, inplace=True)
 

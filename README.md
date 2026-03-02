@@ -61,3 +61,7 @@ If a stylist-specific price is **blank or zero**, the **Default Price** is autom
 
 ## Volumes parsing
 If you upload the **Service Sales by Team Member** report, the parser uses a FillUp-style logic (bfill) and drops **Grand Total**.
+
+
+## Volumes (Service Sales report)
+The Service Sales by Team Member report includes an overall service summary before stylist breakdown. The app drops rows with no stylist assigned and also removes the **Grand Total** line.
