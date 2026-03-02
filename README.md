@@ -80,3 +80,7 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 
 ## v10 hotfix
 - Fixed DuplicateWidgetID in filters by creating filter widgets once and applying settings to both scenario and baseline tables without re-registering widgets.
+
+
+## v11 hotfix
+- Reset scenario now removes widget keys instead of setting them, fixing Streamlit session-state conflict for global inputs.

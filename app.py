@@ -34,19 +34,19 @@ def _require_password():
     st.stop()
 
 def _reset_scenario():
-    # Explicit defaults
-    st.session_state["global_price_mode"] = "Percent"
-    st.session_state["global_price_adj"] = 0.0
-    st.session_state["global_cost_mode"] = "Percent"
-    st.session_state["global_cost_adj"] = 0.0
+    """
+    Streamlit widget reset strategy:
+    - Remove widget keys from session_state so widgets revert to their declared defaults.
+    - Clear editable tables so they rebuild from the latest data.
+    """
+    # Remove global widget keys (do NOT set them directly, avoids Streamlit "default + session_state" conflict)
+    for k in ["global_price_mode", "global_price_adj", "global_cost_mode", "global_cost_adj"]:
+        st.session_state.pop(k, None)
 
     # Reset filters
-    st.session_state.pop("filter_services", None)
-    st.session_state.pop("filter_stylists", None)
-    st.session_state["filter_hide_zero_qty"] = True
-    st.session_state["filter_hide_missing_cost"] = True
-    st.session_state.pop("filter_qty_range", None)
-    st.session_state.pop("filter_cost_range", None)
+    for k in ["filter_services", "filter_stylists", "filter_qty_range", "filter_cost_range",
+              "filter_hide_zero_qty", "filter_hide_missing_cost"]:
+        st.session_state.pop(k, None)
 
     # Clear tables so they rebuild from data
     for k in ["stylist_controls", "service_overrides", "stylist_controls_editor", "service_overrides_editor"]:
