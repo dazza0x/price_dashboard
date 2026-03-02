@@ -49,3 +49,11 @@ password = "your-strong-password"
 
 ## Reset scenario
 Use the sidebar button **Reset scenario** to clear overrides and return to defaults.
+
+
+## Stylist Prices cleaning
+The app drops non-service rows such as **Online Booking / Bookable Online** and any rows where all price columns are blank.
+
+
+## Stylist price fallback
+If a stylist-specific price is **blank or zero**, the **Default Price** is automatically used.

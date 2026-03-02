@@ -25,11 +25,15 @@ def load_stylist_price_matrix(file) -> tuple[pd.DataFrame, dict]:
     """
     Accepts a matrix-style sheet with columns:
       Description | Default Price | <Stylist 1> | <Stylist 2> | ...
-    Tries to find header row containing 'Description'.
-    Returns the cleaned matrix with dynamic stylist columns preserved.
+    Finds the header row containing 'Description', then:
+      - drops blank/garbage rows (e.g., Online Booking / Bookable Online / nan)
+      - drops rows where *all* price columns are empty
+      - keeps dynamic stylist columns
+    Returns the cleaned matrix and metadata.
     """
-    # Try first sheet
-    raw = pd.read_excel(file, header=None, engine=None)
+    raw = pd.read_excel(file, header=None)
+
+    # Find header row containing 'Description'
     header_i = -1
     for i in range(len(raw)):
         row = [str(x).strip().lower() for x in raw.iloc[i].tolist()]
@@ -40,8 +44,11 @@ def load_stylist_price_matrix(file) -> tuple[pd.DataFrame, dict]:
         raise ValueError("Could not find a header row containing 'Description' in the Stylist Prices file.")
 
     headers = raw.iloc[header_i].tolist()
-    df = raw.iloc[header_i+1:].copy()
+    df = raw.iloc[header_i + 1:].copy()
     df.columns = headers
+
+    # Drop columns with blank/NaN header names
+    df = df.loc[:, [c for c in df.columns if isinstance(c, str) and str(c).strip() != ""]].copy()
 
     desc_col = _pick(df.columns, ["Description", "Service", "Services"])
     default_col = _pick(df.columns, ["Default Price", "Default", "Price"])
@@ -54,17 +61,35 @@ def load_stylist_price_matrix(file) -> tuple[pd.DataFrame, dict]:
     df = df.iloc[:, desc_idx:].copy()
     df = df.rename(columns={desc_col: "Description", default_col: "Default Price"})
 
-    df["Description"] = df["Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
-    df = df[df["Description"].notna()].copy()
-    df = df[df["Description"].astype(str).str.strip() != ""].copy()
+    # Clean description text
+    df["Description"] = (
+        df["Description"]
+        .astype(str)
+        .str.replace("\u00a0", " ", regex=False)
+        .str.strip()
+    )
 
-    # Coerce numeric
+    # Drop obvious non-service rows
+    bad_desc = {
+        "", "nan", "none",
+        "online booking", "bookable online",
+        "grand total", "inspired hair supplies",
+    }
+    df = df[~df["Description"].str.lower().isin(bad_desc)].copy()
+
+    # Coerce numeric for all price columns
     for c in df.columns:
         if c != "Description":
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
+    # Drop rows where ALL price columns are NaN (removes section labels etc.)
+    price_cols = [c for c in df.columns if c != "Description"]
+    df = df[~df[price_cols].isna().all(axis=1)].copy()
+
+    df = df.reset_index(drop=True)
+
     meta = {"stylist_columns": [c for c in df.columns if c not in ("Description", "Default Price")]}
-    return df.reset_index(drop=True), meta
+    return df, meta
 
 def load_service_cost(file) -> pd.DataFrame:
     df = pd.read_excel(file)
@@ -184,12 +209,16 @@ def build_long_table(price_matrix: pd.DataFrame, service_cost: pd.DataFrame, qty
         var_name="Stylist",
         value_name="Stylist Price",
     )
+
     long["Services"] = long["Description"].astype(str).str.strip()
     long.drop(columns=["Description"], inplace=True)
 
-    # Effective base Price: stylist price if present else Default Price
-    long["Price_base"] = np.where(long["Stylist Price"].notna(), long["Stylist Price"], long["Default Price"])
-    long["Price_base"] = pd.to_numeric(long["Price_base"], errors="coerce")
+    # Effective base Price:
+    # use stylist price ONLY if it is > 0, otherwise fall back to Default Price
+    sp = pd.to_numeric(long["Stylist Price"], errors="coerce")
+    dp = pd.to_numeric(long["Default Price"], errors="coerce")
+
+    long["Price_base"] = np.where(sp.notna() & (sp > 0), sp, dp)
 
     # Join costs
     cost = service_cost.copy()
@@ -200,7 +229,6 @@ def build_long_table(price_matrix: pd.DataFrame, service_cost: pd.DataFrame, qty
     merged["PerService_base"] = pd.to_numeric(merged["Per Service"], errors="coerce")
     merged.drop(columns=["Per Service"], inplace=True)
 
-    # Optional qty
     validations = {
         "missing_cost_services": sorted(set(merged.loc[merged["PerService_base"].isna(), "Services"].dropna().unique())),
         "missing_price_services": sorted(set(cost.loc[~cost["key"].isin(set(merged["key"])), "Service Description"].dropna().unique())),
@@ -214,7 +242,6 @@ def build_long_table(price_matrix: pd.DataFrame, service_cost: pd.DataFrame, qty
         merged["Qty"] = merged["Qty"].fillna(0).astype(int)
         validations["qty_unmatched_services"] = sorted(set(q.loc[~q["key"].isin(set(merged["key"])), "Services"].dropna().unique()))
 
-    # Final base columns
     base = merged[["Services","Stylist","Price_base","PerService_base"] + (["Qty"] if "Qty" in merged.columns else [])].copy()
     return base, validations
 
