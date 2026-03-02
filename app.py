@@ -184,6 +184,7 @@ st.subheader("Scenario table")
 filtered = result.copy()
 filtered_base = baseline_result.copy()
 
+
 with st.expander("Filters", expanded=False):
     svc_all = sorted(filtered["Services"].dropna().astype(str).unique())
     sty_all = sorted(filtered["Stylist"].dropna().astype(str).unique())
@@ -191,36 +192,56 @@ with st.expander("Filters", expanded=False):
     sel_services = st.multiselect("Services", svc_all, default=svc_all, key="filter_services")
     sel_stylists = st.multiselect("Stylist", sty_all, default=sty_all, key="filter_stylists")
 
-    def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
-        out = df.copy()
-        out = out[out["Services"].astype(str).isin(sel_services)]
-        out = out[out["Stylist"].astype(str).isin(sel_stylists)]
+    hide_zero_qty = None
+    if "Qty" in filtered.columns:
+        hide_zero_qty = st.checkbox("Hide rows with Qty = 0", value=True, key="filter_hide_zero_qty")
 
-        if "Qty" in out.columns:
-            hide_zero_qty = st.checkbox("Hide rows with Qty = 0", value=True, key="filter_hide_zero_qty")
-            if hide_zero_qty:
-                out = out[out["Qty"] != 0]
+    hide_missing_cost = st.checkbox("Hide rows with missing Per Service", value=True, key="filter_hide_missing_cost")
 
-        hide_missing_cost = st.checkbox("Hide rows with missing Per Service", value=True, key="filter_hide_missing_cost")
-        if hide_missing_cost:
-            out = out[out["Per Service"].notna()]
+    qty_range = None
+    if "Qty" in filtered.columns and len(filtered):
+        qmin, qmax = int(filtered["Qty"].min()), int(filtered["Qty"].max())
+        qty_range = st.slider(
+            "Qty range",
+            min_value=qmin,
+            max_value=qmax,
+            value=(qmin, qmax),
+            key="filter_qty_range",
+        )
 
-        if "Qty" in out.columns and len(out):
-            qmin, qmax = int(out["Qty"].min()), int(out["Qty"].max())
-            q_range = st.slider("Qty range", min_value=qmin, max_value=qmax, value=(qmin, qmax), key="filter_qty_range")
-            out = out[(out["Qty"] >= q_range[0]) & (out["Qty"] <= q_range[1])]
+    cost_range = None
+    if len(filtered) and filtered["Per Service"].notna().any():
+        cmin = float(filtered["Per Service"].min())
+        cmax = float(filtered["Per Service"].max())
+        cost_range = st.slider(
+            "Per Service range",
+            min_value=cmin,
+            max_value=cmax,
+            value=(cmin, cmax),
+            key="filter_cost_range",
+        )
 
-        if len(out) and out["Per Service"].notna().any():
-            cmin = float(out["Per Service"].min())
-            cmax = float(out["Per Service"].max())
-            c_range = st.slider("Per Service range", min_value=cmin, max_value=cmax, value=(cmin, cmax), key="filter_cost_range")
-            out = out[(out["Per Service"] >= c_range[0]) & (out["Per Service"] <= c_range[1])]
+def _apply_filters_values(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out = out[out["Services"].astype(str).isin(sel_services)]
+    out = out[out["Stylist"].astype(str).isin(sel_stylists)]
 
-        return out
+    if hide_zero_qty and "Qty" in out.columns:
+        out = out[out["Qty"] != 0]
 
-    filtered = _apply_filters(filtered)
-    filtered_base = _apply_filters(filtered_base)
+    if hide_missing_cost:
+        out = out[out["Per Service"].notna()]
 
+    if qty_range is not None and "Qty" in out.columns:
+        out = out[(out["Qty"] >= qty_range[0]) & (out["Qty"] <= qty_range[1])]
+
+    if cost_range is not None:
+        out = out[(out["Per Service"] >= cost_range[0]) & (out["Per Service"] <= cost_range[1])]
+
+    return out
+
+filtered = _apply_filters_values(filtered)
+filtered_base = _apply_filters_values(filtered_base)
 st.caption(f"Showing {len(filtered):,} / {len(result):,} rows after filters.")
 st.dataframe(filtered, use_container_width=True, height=520)
 

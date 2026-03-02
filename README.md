@@ -76,3 +76,7 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - KPIs now use the filtered view.
 - Added Qty × Per Service KPI (Before/After/Delta) when volumes provided.
 - Reset scenario now explicitly restores global defaults and clears tables/filters.
+
+
+## v10 hotfix
+- Fixed DuplicateWidgetID in filters by creating filter widgets once and applying settings to both scenario and baseline tables without re-registering widgets.
