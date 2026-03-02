@@ -21,6 +21,26 @@ def _pick(cols, candidates):
                 return c
     return None
 
+def load_staff_list(file) -> pd.DataFrame:
+    """
+    Staff list with columns like: Stylist, Salon, Type.
+    Returns a cleaned table with trimmed text columns.
+    """
+    df = pd.read_excel(file)
+    stylist_col = _pick(df.columns, ["Stylist", "Team Member", "Name"])
+    salon_col = _pick(df.columns, ["Salon", "Location"])
+    type_col = _pick(df.columns, ["Type", "Role"])
+    if stylist_col is None or salon_col is None or type_col is None:
+        raise ValueError(f"Staff list must include Stylist + Salon + Type. Found: {list(df.columns)}")
+
+    out = df[[stylist_col, salon_col, type_col]].copy()
+    out.columns = ["Stylist", "Salon", "Type"]
+    out["Stylist"] = out["Stylist"].astype(str).str.replace("\u00a0", " ", regex=False).str.strip()
+    out["Salon"] = out["Salon"].astype(str).str.strip()
+    out["Type"] = out["Type"].astype(str).str.strip()
+    out = out[(out["Stylist"] != "") & (out["Stylist"].str.lower() != "nan")]
+    return out.reset_index(drop=True)
+
 def load_stylist_price_matrix(file) -> tuple[pd.DataFrame, dict]:
     """
     Accepts a matrix-style sheet with columns:
@@ -104,7 +124,7 @@ def load_service_cost(file) -> pd.DataFrame:
     out = out[out["Service Description"].notna()].copy()
     return out.reset_index(drop=True)
 
-def load_optional_qty(file) -> pd.DataFrame:
+def load_optional_qty(file, allowed_stylists: set[str] | None = None) -> pd.DataFrame:
     """
     Optional volumes file.
 
@@ -113,6 +133,10 @@ def load_optional_qty(file) -> pd.DataFrame:
       B) A 'Service Sales by Team Member' style report (.xls/.xlsx)
 
     Output columns: Stylist, Services, Qty (aggregated)
+
+    If `allowed_stylists` is provided, parsing prefers the fill direction (ffill vs bfill)
+    that produces the most rows with a stylist in that allowed set, and it filters out
+    rows not in that set.
     """
     xls = pd.ExcelFile(file)
     sheet_candidates = xls.sheet_names
@@ -132,6 +156,8 @@ def load_optional_qty(file) -> pd.DataFrame:
         out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
         out = out[(out["Services"].notna()) & (out["Services"].astype(str).str.strip() != "")]
         out = out[(out["Stylist"].notna()) & (out["Stylist"].astype(str).str.strip() != "")]
+        if allowed_stylists:
+            out = out[out["Stylist"].isin(allowed_stylists)].copy()
         out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
         return out.reset_index(drop=True)
 
@@ -173,14 +199,13 @@ def load_optional_qty(file) -> pd.DataFrame:
     df.columns = ["Description", "Qty"]
 
     # Clean description: turn 'nan'/blank into real NaN
-    desc_clean = (
+    df["Description"] = (
         df["Description"]
         .astype(str)
         .str.replace("\u00a0"," ", regex=False)
         .str.strip()
-        .replace({"nan": np.nan, "None": np.nan, "": np.nan})
+        .replace({"nan": None, "None": None, "": None})
     )
-    df["Description"] = desc_clean
 
     # Qty numeric (blank => NaN)
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
@@ -189,27 +214,30 @@ def load_optional_qty(file) -> pd.DataFrame:
     drop_desc = {"grand total", "hair", "treatment", "inspired hair supplies"}
     df = df[~df["Description"].fillna("").str.lower().isin(drop_desc)].copy()
 
-    # Stylist rows are those with Qty null and Description present; services rows have Qty.
-    # In this report format, stylist header sits ABOVE their service rows, so use ffill.
-    df["Stylist"] = np.where(df["Qty"].isna() & df["Description"].notna(), df["Description"], np.nan)
-    df["Stylist"] = df["Stylist"].ffill()
+    # Identify stylist headers
+    df["StylistHeader"] = np.where(df["Qty"].isna() & df["Description"].notna(), df["Description"], np.nan)
 
-    # Keep only service rows (those with Qty) AND with an assigned Stylist
-    df = df[df["Qty"].notna()].copy()
-    df = df[df["Stylist"].notna()].copy()
+    def _build_out(fill_method: str) -> pd.DataFrame:
+        tmp = df.copy()
+        tmp["Stylist"] = tmp["StylistHeader"].ffill() if fill_method == "ffill" else tmp["StylistHeader"].bfill()
+        tmp = tmp[tmp["Qty"].notna()].copy()
+        tmp = tmp[tmp["Stylist"].notna()].copy()
+        tmp.rename(columns={"Description": "Services"}, inplace=True)
+        tmp["Qty"] = tmp["Qty"].fillna(0).astype(int)
+        out = tmp[["Stylist","Services","Qty"]].copy()
+        out["Stylist"] = out["Stylist"].astype(str).str.strip()
+        out["Services"] = out["Services"].astype(str).str.strip()
+        out = out[(out["Stylist"] != "") & (out["Stylist"].str.lower() != "nan")]
+        out = out[(out["Services"] != "") & (out["Services"].str.lower() != "nan")]
+        if allowed_stylists:
+            out = out[out["Stylist"].isin(allowed_stylists)].copy()
+        return out
 
-    df["Qty"] = df["Qty"].fillna(0).astype(int)
-    df.rename(columns={"Description": "Services"}, inplace=True)
+    out_ffill = _build_out("ffill")
+    out_bfill = _build_out("bfill")
 
-    out = df[["Stylist", "Services", "Qty"]].copy()
-    out["Stylist"] = out["Stylist"].astype(str).str.strip()
-    out["Services"] = out["Services"].astype(str).str.strip()
+    out = out_ffill if len(out_ffill) >= len(out_bfill) else out_bfill
 
-    # Drop any residual blanks
-    out = out[(out["Stylist"] != "") & (out["Stylist"].str.lower() != "nan")]
-    out = out[(out["Services"] != "") & (out["Services"].str.lower() != "nan")]
-
-    # Aggregate duplicates
     out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
     return out.reset_index(drop=True)
 

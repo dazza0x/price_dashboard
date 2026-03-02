@@ -8,6 +8,7 @@ from transform import (
     load_stylist_price_matrix,
     load_service_cost,
     load_optional_qty,
+    load_staff_list,
     build_long_table,
     apply_scenario,
 )
@@ -52,6 +53,12 @@ with st.sidebar:
     cost_file = st.file_uploader("2) Service Cost (xls/xlsx)", type=["xlsx","xls"])
 
     st.divider()
+    st.header("Optional staff filter")
+    staff_file = st.file_uploader("Staff list (xlsx) — optional", type=["xlsx","xls"])
+    salon_choice = st.selectbox("Salon filter", ["Caterham","Purley"], index=0)
+    st.caption("If provided, the app filters to Salon=selected and Type=Stylist.")
+
+    st.divider()
     st.header("Optional volumes")
     qty_file = st.file_uploader("3) Volumes (xls/xlsx) — optional", type=["xlsx","xls"])
     st.caption("Accepted: a simple table (Stylist, Services/Description, Qty) OR a 'Service Sales by Team Member' .xls report.")
@@ -76,12 +83,20 @@ if prices_file is None or cost_file is None:
 price_matrix, meta = load_stylist_price_matrix(prices_file)
 service_cost = load_service_cost(cost_file)
 
+allowed_stylists = None
+if staff_file is not None:
+    staff_df = load_staff_list(staff_file)
+    staff_df = staff_df[(staff_df['Salon'].astype(str).str.strip().str.lower() == salon_choice.lower()) & (staff_df['Type'].astype(str).str.strip().str.lower() == 'stylist')]
+    allowed_stylists = set(staff_df['Stylist'].astype(str).str.strip())
+
 qty_df = None
 if qty_file is not None:
-    qty_df = load_optional_qty(qty_file)
+    qty_df = load_optional_qty(qty_file, allowed_stylists=allowed_stylists)
 
 # --- Build base long table ---
 base_long, validations = build_long_table(price_matrix, service_cost, qty_df)
+if allowed_stylists:
+    base_long = base_long[base_long['Stylist'].isin(allowed_stylists)].copy()
 
 # --- Scenario controls (stylist table) ---
 st.subheader("Scenario controls")

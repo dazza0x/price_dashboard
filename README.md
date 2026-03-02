@@ -65,3 +65,7 @@ If you upload the **Service Sales by Team Member** report, the parser uses a Fil
 
 ## Volumes (Service Sales report)
 The Service Sales by Team Member report includes an overall service summary before stylist breakdown. The app drops rows with no stylist assigned and also removes the **Grand Total** line.
+
+
+## Staff list filter (optional)
+Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboard. The app keeps only rows where **Salon** matches the selected salon and **Type = Stylist**. This filter is applied to volumes and scenario outputs.
