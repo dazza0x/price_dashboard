@@ -71,8 +71,8 @@ The Service Sales by Team Member report includes an overall service summary befo
 Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboard. The app keeps only rows where **Salon** matches the selected salon and **Type = Stylist**. This filter is applied to volumes and scenario outputs.
 
 
-## v8 UX updates
-- Reset scenario resets global controls and tables.
-- Scenario controls table is collapsible.
-- Scenario table includes filters and a filtered export sheet.
-- Profit impact KPI shows Before → After and delta.
+## v9 layout + KPI updates
+- Global scenario controls moved into the main page.
+- KPIs now use the filtered view.
+- Added Qty × Per Service KPI (Before/After/Delta) when volumes provided.
+- Reset scenario now explicitly restores global defaults and clears tables/filters.
