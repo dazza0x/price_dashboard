@@ -1,4 +1,5 @@
 import io
+import hmac
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -9,25 +10,51 @@ from transform import (
     load_optional_qty,
     build_long_table,
     apply_scenario,
-    normalise_key,
 )
 
 st.set_page_config(page_title="Touche Hairdressing — Pricing Dashboard", page_icon="📊", layout="wide")
 
+def _require_password():
+    if "auth" not in st.secrets or "password" not in st.secrets["auth"]:
+        st.error("Password is not configured. Add this to Streamlit Secrets:\n\n[auth]\npassword = \"your-strong-password\"")
+        st.stop()
+    if st.session_state.get("authenticated"):
+        return
+    st.sidebar.subheader("🔒 Access")
+    pw = st.sidebar.text_input("Password", type="password")
+    correct = st.secrets["auth"]["password"]
+    if pw and hmac.compare_digest(pw, correct):
+        st.session_state["authenticated"] = True
+        st.sidebar.success("Access granted")
+        return
+    if pw:
+        st.sidebar.error("Incorrect password")
+    st.stop()
+
+def _reset_scenario():
+    for k in ["stylist_controls", "service_overrides"]:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.rerun()
+
+_require_password()
+
 st.title("📊 Touche Hairdressing — Pricing & Cost What‑If Dashboard")
 st.write(
-    "Upload your **Stylist Prices** (matrix) and **Service Cost** table. Optionally upload a **Stylist Service Report** "
-    "with quantities to see weighted impacts. Edit scenario controls and overrides to see live updates."
+    "Upload **Stylist Prices** and **Service Cost**. Optionally upload a **Service Sales by Team Member** report "
+    "(or any volumes file with Stylist + Services/Description + Qty) to see weighted impacts. "
+    "Use the controls and overrides to test scenarios in real time."
 )
 
 with st.sidebar:
     st.header("Uploads (required)")
     prices_file = st.file_uploader("1) Stylist Prices (xls/xlsx)", type=["xls","xlsx"])
-    cost_file = st.file_uploader("2) Service Cost (xlsx)", type=["xlsx","xls"])
+    cost_file = st.file_uploader("2) Service Cost (xls/xlsx)", type=["xlsx","xls"])
 
     st.divider()
     st.header("Optional volumes")
-    qty_file = st.file_uploader("3) Service volumes (xlsx) — optional", type=["xlsx","xls"])
+    qty_file = st.file_uploader("3) Volumes (xls/xlsx) — optional", type=["xlsx","xls"])
+    st.caption("Accepted: a simple table (Stylist, Services/Description, Qty) OR a 'Service Sales by Team Member' .xls report.")
 
     st.divider()
     st.header("Global scenario")
@@ -38,7 +65,8 @@ with st.sidebar:
     cost_adj = st.number_input("Per Service adjustment", value=0.0, step=0.5)
 
     st.divider()
-    st.caption("Edits below update instantly.")
+    if st.button("Reset scenario"):
+        _reset_scenario()
 
 if prices_file is None or cost_file is None:
     st.info("Upload **Stylist Prices** and **Service Cost** to start.")
@@ -59,7 +87,6 @@ base_long, validations = build_long_table(price_matrix, service_cost, qty_df)
 st.subheader("Scenario controls")
 
 stylists = sorted(base_long["Stylist"].dropna().astype(str).unique())
-
 default_stylist_controls = pd.DataFrame({
     "Stylist": stylists,
     "Price %": 0.0,
@@ -80,7 +107,6 @@ st.session_state["stylist_controls"] = st.data_editor(
 
 # --- Service overrides table (optional) ---
 services = sorted(base_long["Services"].dropna().astype(str).unique())
-
 default_service_overrides = pd.DataFrame({
     "Services": services,
     "Override Price": np.nan,
@@ -99,7 +125,6 @@ with st.expander("Service-level overrides (optional) — set absolute values"):
         key="service_overrides_editor",
     )
 
-# --- Apply scenario ---
 scenario = {
     "global_price_mode": price_mode,
     "global_price_adj": float(price_adj),
@@ -116,7 +141,6 @@ result = apply_scenario(
 
 # --- KPIs ---
 st.subheader("Outputs")
-
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Rows", f"{len(result):,}")
 col2.metric("Services", f"{result['Services'].nunique():,}")
@@ -139,45 +163,18 @@ with st.expander("Validation checks"):
     else:
         st.success("All costed services exist in prices.")
 
-    if validations["qty_unmatched_services"]:
-        st.warning(f"{len(validations['qty_unmatched_services']):,} service(s) in volumes could not be matched.")
-        st.dataframe(pd.DataFrame({"Services": validations["qty_unmatched_services"]}), use_container_width=True)
-    elif qty_df is not None:
-        st.success("All volume services matched.")
+    if qty_df is not None:
+        if validations["qty_unmatched_services"]:
+            st.warning(f"{len(validations['qty_unmatched_services']):,} service(s) in volumes could not be matched.")
+            st.dataframe(pd.DataFrame({"Services": validations["qty_unmatched_services"]}), use_container_width=True)
+        else:
+            st.success("All volume services matched.")
     else:
         st.info("No volumes file uploaded; weighted checks disabled.")
 
 # --- Result table ---
 st.subheader("Scenario table")
 st.dataframe(result, use_container_width=True, height=520)
-
-# --- Summaries ---
-with st.expander("Summaries"):
-    by_stylist = result.groupby("Stylist", dropna=False).agg(
-        Avg_Price=("Price", "mean"),
-        Avg_Cost=("Per Service", "mean"),
-        Avg_ProfitPct=("Profit %", "mean"),
-        Total_Diff=("Difference", "sum"),
-    ).reset_index()
-    if "Qty" in result.columns:
-        by_stylist["Total_Qty"] = result.groupby("Stylist")["Qty"].sum().values
-        by_stylist["Weighted_Diff"] = result.groupby("Stylist")["Weighted Difference"].sum().values
-
-    st.markdown("**By stylist**")
-    st.dataframe(by_stylist, use_container_width=True)
-
-    by_service = result.groupby("Services", dropna=False).agg(
-        Avg_Price=("Price", "mean"),
-        Avg_Cost=("Per Service", "mean"),
-        Avg_ProfitPct=("Profit %", "mean"),
-        Total_Diff=("Difference", "sum"),
-    ).reset_index()
-    if "Qty" in result.columns:
-        by_service["Total_Qty"] = result.groupby("Services")["Qty"].sum().values
-        by_service["Weighted_Diff"] = result.groupby("Services")["Weighted Difference"].sum().values
-
-    st.markdown("**By service**")
-    st.dataframe(by_service, use_container_width=True)
 
 # --- Export ---
 st.subheader("Download")

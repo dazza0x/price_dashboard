@@ -37,3 +37,15 @@ If uploaded, the dashboard calculates **Weighted Difference** = Difference × Qt
 ## Deploy
 - Main file: `app.py`
 - Streamlit Cloud recommended Python: 3.12
+
+
+## Password protection
+Add to Streamlit Secrets:
+
+```toml
+[auth]
+password = "your-strong-password"
+```
+
+## Reset scenario
+Use the sidebar button **Reset scenario** to clear overrides and return to defaults.

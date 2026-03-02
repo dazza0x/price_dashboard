@@ -81,21 +81,98 @@ def load_service_cost(file) -> pd.DataFrame:
 
 def load_optional_qty(file) -> pd.DataFrame:
     """
-    Optional volumes file. Accepts either:
-      - columns: Stylist, Description/Services, Qty
+    Optional volumes file.
+
+    Accepts either:
+      A) Simple table with columns: Stylist, Description/Services, Qty
+      B) A 'Service Sales by Team Member' style report (.xls/.xlsx), where stylist names appear as header rows and
+         service lines carry Qty.
+
+    Output columns: Stylist, Services, Qty
     """
-    df = pd.read_excel(file)
-    stylist_col = _pick(df.columns, ["Stylist", "Team Member", "TeamMember"])
-    desc_col = _pick(df.columns, ["Description", "Services", "Service Description"])
-    qty_col = _pick(df.columns, ["Qty", "Quantity"])
-    if stylist_col is None or desc_col is None or qty_col is None:
-        raise ValueError(f"Volumes file must include Stylist + Description/Services + Qty. Found: {list(df.columns)}")
-    out = df[[stylist_col, desc_col, qty_col]].copy()
-    out.columns = ["Stylist", "Services", "Qty"]
+    # Try read all sheets; if it's the Service Sales report, the sheet often is "Service Sales by Team Mem"
+    xls = pd.ExcelFile(file)
+    sheet_candidates = xls.sheet_names
+
+    # First: try simple-table read from first sheet
+    df0 = pd.read_excel(file, sheet_name=sheet_candidates[0])
+
+    stylist_col = _pick(df0.columns, ["Stylist", "Team Member", "TeamMember"])
+    desc_col = _pick(df0.columns, ["Services", "Description", "Service Description"])
+    qty_col = _pick(df0.columns, ["Qty", "Quantity"])
+
+    if stylist_col is not None and desc_col is not None and qty_col is not None:
+        out = df0[[stylist_col, desc_col, qty_col]].copy()
+        out.columns = ["Stylist", "Services", "Qty"]
+        out["Stylist"] = out["Stylist"].astype(str).str.strip()
+        out["Services"] = out["Services"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+        out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
+        out = out[out["Services"].notna()].copy()
+        return out.reset_index(drop=True)
+
+    # Second: attempt to parse Service Sales by Team Member report
+    ss_sheet = None
+    for s in sheet_candidates:
+        if "service sales" in s.lower():
+            ss_sheet = s
+            break
+    if ss_sheet is None:
+        # try any sheet that looks like it includes "Team Mem"
+        for s in sheet_candidates:
+            if "team mem" in s.lower():
+                ss_sheet = s
+                break
+    if ss_sheet is None:
+        raise ValueError(
+            f"Volumes file must include Stylist + Description/Services + Qty, OR be a Service Sales report. "
+            f"Found columns: {list(df0.columns)}"
+        )
+
+    raw = pd.read_excel(file, sheet_name=ss_sheet, header=None)
+
+    # Find header row containing 'Description' and 'Qty'
+    header_i = -1
+    for i in range(len(raw)):
+        row = [str(x).strip().lower() for x in raw.iloc[i].tolist()]
+        if "description" in row and any(x in ("qty", "quantity") for x in row):
+            header_i = i
+            break
+    if header_i < 0:
+        raise ValueError(f"Could not locate header row in sheet '{ss_sheet}' containing Description + Qty.")
+
+    headers = raw.iloc[header_i].tolist()
+    df = raw.iloc[header_i+1:].copy()
+    df.columns = headers
+
+    desc = _pick(df.columns, ["Description"])
+    qty = _pick(df.columns, ["Qty", "Quantity"])
+    if desc is None or qty is None:
+        raise ValueError(f"Could not map Description/Qty after header promotion. Columns: {list(df.columns)}")
+
+    df = df[[desc, qty]].copy()
+    df.columns = ["Description", "Qty"]
+
+    df["Description"] = df["Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+    df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce")
+
+    # Remove obvious section labels if present
+    df = df[df["Description"].notna()].copy()
+    df = df[~df["Description"].isin(["Hair", "Treatment"])].copy()
+
+    # Stylist rows are those with Qty null; services rows have Qty
+    df["Stylist"] = np.where(df["Qty"].isna(), df["Description"], np.nan)
+    df["Stylist"] = df["Stylist"].ffill()
+
+    df = df[df["Qty"].notna()].copy()
+    df["Qty"] = df["Qty"].fillna(0).astype(int)
+    df.rename(columns={"Description": "Services"}, inplace=True)
+
+    out = df[["Stylist", "Services", "Qty"]].copy()
     out["Stylist"] = out["Stylist"].astype(str).str.strip()
-    out["Services"] = out["Services"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
-    out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
-    out = out[out["Services"].notna()].copy()
+    out["Services"] = out["Services"].astype(str).str.strip()
+
+    # Aggregate in case of duplicates
+    out = out.groupby(["Stylist","Services"], as_index=False)["Qty"].sum()
     return out.reset_index(drop=True)
 
 def build_long_table(price_matrix: pd.DataFrame, service_cost: pd.DataFrame, qty_df: pd.DataFrame | None):
