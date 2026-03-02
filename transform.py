@@ -1,0 +1,207 @@
+import re
+import numpy as np
+import pandas as pd
+
+def normalise_key(s: str) -> str:
+    if s is None:
+        return ""
+    s = str(s).replace("\u00a0", " ").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _pick(cols, candidates):
+    lower = {str(c).strip().lower(): c for c in cols}
+    for cand in candidates:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    for c in cols:
+        cl = str(c).strip().lower()
+        for cand in candidates:
+            if cand.lower() in cl:
+                return c
+    return None
+
+def load_stylist_price_matrix(file) -> tuple[pd.DataFrame, dict]:
+    """
+    Accepts a matrix-style sheet with columns:
+      Description | Default Price | <Stylist 1> | <Stylist 2> | ...
+    Tries to find header row containing 'Description'.
+    Returns the cleaned matrix with dynamic stylist columns preserved.
+    """
+    # Try first sheet
+    raw = pd.read_excel(file, header=None, engine=None)
+    header_i = -1
+    for i in range(len(raw)):
+        row = [str(x).strip().lower() for x in raw.iloc[i].tolist()]
+        if "description" in row:
+            header_i = i
+            break
+    if header_i < 0:
+        raise ValueError("Could not find a header row containing 'Description' in the Stylist Prices file.")
+
+    headers = raw.iloc[header_i].tolist()
+    df = raw.iloc[header_i+1:].copy()
+    df.columns = headers
+
+    desc_col = _pick(df.columns, ["Description", "Service", "Services"])
+    default_col = _pick(df.columns, ["Default Price", "Default", "Price"])
+
+    if desc_col is None or default_col is None:
+        raise ValueError(f"Could not map 'Description' and 'Default Price'. Found columns: {list(df.columns)}")
+
+    # Keep from description onwards (dynamic stylists)
+    desc_idx = list(df.columns).index(desc_col)
+    df = df.iloc[:, desc_idx:].copy()
+    df = df.rename(columns={desc_col: "Description", default_col: "Default Price"})
+
+    df["Description"] = df["Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+    df = df[df["Description"].notna()].copy()
+    df = df[df["Description"].astype(str).str.strip() != ""].copy()
+
+    # Coerce numeric
+    for c in df.columns:
+        if c != "Description":
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    meta = {"stylist_columns": [c for c in df.columns if c not in ("Description", "Default Price")]}
+    return df.reset_index(drop=True), meta
+
+def load_service_cost(file) -> pd.DataFrame:
+    df = pd.read_excel(file)
+    desc_col = _pick(df.columns, ["Service Description", "Description", "Service", "Services"])
+    per_col = _pick(df.columns, ["Per Service", "Cost", "Charge", "PerService"])
+    if desc_col is None or per_col is None:
+        raise ValueError(f"Could not map Service Description + Per Service in cost file. Found: {list(df.columns)}")
+    out = df[[desc_col, per_col]].copy()
+    out.columns = ["Service Description", "Per Service"]
+    out["Service Description"] = out["Service Description"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+    out["Per Service"] = pd.to_numeric(out["Per Service"], errors="coerce")
+    out = out[out["Service Description"].notna()].copy()
+    return out.reset_index(drop=True)
+
+def load_optional_qty(file) -> pd.DataFrame:
+    """
+    Optional volumes file. Accepts either:
+      - columns: Stylist, Description/Services, Qty
+    """
+    df = pd.read_excel(file)
+    stylist_col = _pick(df.columns, ["Stylist", "Team Member", "TeamMember"])
+    desc_col = _pick(df.columns, ["Description", "Services", "Service Description"])
+    qty_col = _pick(df.columns, ["Qty", "Quantity"])
+    if stylist_col is None or desc_col is None or qty_col is None:
+        raise ValueError(f"Volumes file must include Stylist + Description/Services + Qty. Found: {list(df.columns)}")
+    out = df[[stylist_col, desc_col, qty_col]].copy()
+    out.columns = ["Stylist", "Services", "Qty"]
+    out["Stylist"] = out["Stylist"].astype(str).str.strip()
+    out["Services"] = out["Services"].astype(str).str.replace("\u00a0"," ", regex=False).str.strip()
+    out["Qty"] = pd.to_numeric(out["Qty"], errors="coerce").fillna(0).astype(int)
+    out = out[out["Services"].notna()].copy()
+    return out.reset_index(drop=True)
+
+def build_long_table(price_matrix: pd.DataFrame, service_cost: pd.DataFrame, qty_df: pd.DataFrame | None):
+    # Melt matrix to long
+    stylist_cols = [c for c in price_matrix.columns if c not in ("Description", "Default Price")]
+    long = price_matrix.melt(
+        id_vars=["Description", "Default Price"],
+        value_vars=stylist_cols,
+        var_name="Stylist",
+        value_name="Stylist Price",
+    )
+    long["Services"] = long["Description"].astype(str).str.strip()
+    long.drop(columns=["Description"], inplace=True)
+
+    # Effective base Price: stylist price if present else Default Price
+    long["Price_base"] = np.where(long["Stylist Price"].notna(), long["Stylist Price"], long["Default Price"])
+    long["Price_base"] = pd.to_numeric(long["Price_base"], errors="coerce")
+
+    # Join costs
+    cost = service_cost.copy()
+    cost["key"] = cost["Service Description"].map(normalise_key)
+    long["key"] = long["Services"].map(normalise_key)
+
+    merged = long.merge(cost[["key", "Per Service"]], how="left", on="key")
+    merged["PerService_base"] = pd.to_numeric(merged["Per Service"], errors="coerce")
+    merged.drop(columns=["Per Service"], inplace=True)
+
+    # Optional qty
+    validations = {
+        "missing_cost_services": sorted(set(merged.loc[merged["PerService_base"].isna(), "Services"].dropna().unique())),
+        "missing_price_services": sorted(set(cost.loc[~cost["key"].isin(set(merged["key"])), "Service Description"].dropna().unique())),
+        "qty_unmatched_services": [],
+    }
+
+    if qty_df is not None:
+        q = qty_df.copy()
+        q["key"] = q["Services"].map(normalise_key)
+        merged = merged.merge(q[["Stylist","key","Qty"]], how="left", on=["Stylist","key"])
+        merged["Qty"] = merged["Qty"].fillna(0).astype(int)
+        validations["qty_unmatched_services"] = sorted(set(q.loc[~q["key"].isin(set(merged["key"])), "Services"].dropna().unique()))
+
+    # Final base columns
+    base = merged[["Services","Stylist","Price_base","PerService_base"] + (["Qty"] if "Qty" in merged.columns else [])].copy()
+    return base, validations
+
+def apply_scenario(base_long: pd.DataFrame, scenario: dict, stylist_controls: pd.DataFrame, service_overrides: pd.DataFrame) -> pd.DataFrame:
+    df = base_long.copy()
+
+    # Global adjustments
+    if scenario["global_price_mode"] == "Percent":
+        df["Price"] = df["Price_base"] * (1 + scenario["global_price_adj"]/100.0)
+    else:
+        df["Price"] = df["Price_base"] + scenario["global_price_adj"]
+
+    if scenario["global_cost_mode"] == "Percent":
+        df["Per Service"] = df["PerService_base"] * (1 + scenario["global_cost_adj"]/100.0)
+    else:
+        df["Per Service"] = df["PerService_base"] + scenario["global_cost_adj"]
+
+    # Stylist adjustments
+    sc = stylist_controls.copy()
+    sc_cols = ["Stylist","Price %","Price £","Cost %","Cost £"]
+    for c in sc_cols:
+        if c not in sc.columns:
+            raise ValueError("Stylist controls table was modified unexpectedly; please reset the app.")
+    df = df.merge(sc[sc_cols], how="left", on="Stylist")
+    df[["Price %","Price £","Cost %","Cost £"]] = df[["Price %","Price £","Cost %","Cost £"]].fillna(0.0)
+
+    df["Price"] = df["Price"] * (1 + df["Price %"]/100.0) + df["Price £"]
+    df["Per Service"] = df["Per Service"] * (1 + df["Cost %"]/100.0) + df["Cost £"]
+
+    df.drop(columns=["Price %","Price £","Cost %","Cost £"], inplace=True)
+
+    # Service overrides (absolute)
+    ov = service_overrides.copy()
+    if "Services" in ov.columns:
+        ov["key"] = ov["Services"].map(normalise_key)
+    else:
+        raise ValueError("Service overrides table must contain 'Services'.")
+
+    for col in ["Override Price", "Override Per Service"]:
+        if col not in ov.columns:
+            ov[col] = np.nan
+
+    df["key"] = df["Services"].map(normalise_key)
+    df = df.merge(ov[["key","Override Price","Override Per Service"]], how="left", on="key")
+
+    df["Price"] = np.where(df["Override Price"].notna(), df["Override Price"], df["Price"])
+    df["Per Service"] = np.where(df["Override Per Service"].notna(), df["Override Per Service"], df["Per Service"])
+
+    df.drop(columns=["Override Price","Override Per Service"], inplace=True)
+
+    # Derived metrics
+    df["Difference"] = df["Price"] - df["Per Service"]
+    df["Service %"] = np.where(df["Price"] != 0, (df["Per Service"]/df["Price"]) * 100.0, 0.0)
+    df["Profit %"] = np.where(df["Price"] != 0, (df["Difference"]/df["Price"]) * 100.0, 0.0)
+
+    if "Qty" in df.columns:
+        df["Weighted Difference"] = df["Difference"] * df["Qty"]
+
+    # Output columns
+    cols = ["Services","Stylist","Price","Per Service","Difference","Service %","Profit %"]
+    if "Qty" in df.columns:
+        cols.insert(3, "Qty")
+        cols.append("Weighted Difference")
+
+    out = df[cols].copy()
+    out = out.sort_values(["Services","Stylist"]).reset_index(drop=True)
+    return out
