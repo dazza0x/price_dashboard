@@ -326,36 +326,36 @@ margin_after = rev_after - cost_after
 margin_before = rev_before - cost_before
 margin_delta = margin_after - margin_before
 
-    # Rightmost KPI shows Margin impact (what you "make" after paying Per Service)
-    # Note: This is NOT the same as revenue (Qty × Price).
-    k4.metric(
-        "Salon income (Per Service + Rent)",
-        f"£{income_before:,.2f} → £{income_after:,.2f}",
-        delta=f"{income_delta:+,.2f}",
-        delta_color="normal",
-    )
+# Rightmost KPI shows Margin impact (what you "make" after paying Per Service)
+# Note: This is NOT the same as revenue (Qty × Price).
+k4.metric(
+"Salon income (Per Service + Rent)",
+f"£{income_before:,.2f} → £{income_after:,.2f}",
+delta=f"{income_delta:+,.2f}",
+delta_color="normal",
+)
 
-    r1, r2, r3 = st.columns(3)
-    r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
-    r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
-    r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
+r1, r2, r3 = st.columns(3)
+r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
+r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
+r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Qty × Per Service (Before)", f"£{cost_before:,.2f}")
-    c2.metric("Qty × Per Service (After)", f"£{cost_after:,.2f}")
-    c3.metric("Qty × Per Service (Delta)", f"£{cost_delta:,.2f}", delta=f"{cost_delta:+,.2f}", delta_color="normal")
+c1, c2, c3 = st.columns(3)
+c1.metric("Qty × Per Service (Before)", f"£{cost_before:,.2f}")
+c2.metric("Qty × Per Service (After)", f"£{cost_after:,.2f}")
+c3.metric("Qty × Per Service (Delta)", f"£{cost_delta:,.2f}", delta=f"{cost_delta:+,.2f}", delta_color="normal")
 else:
-    # Fallback when Qty isn't available (no volumes file)
-    after_profit = filtered["Difference"].sum()
-    before_profit = filtered_base["Difference"].sum()
-    delta_profit = after_profit - before_profit
-    k4.metric(
-        "Profit impact (Before → After)",
-        f"£{before_profit:,.2f} → £{after_profit:,.2f}",
-        delta=f"{delta_profit:+,.2f}",
-        delta_color="normal",
-    )
-    st.info("Upload a volumes file (Qty) to see revenue/cost/margin totals and stylist summary.")
+# Fallback when Qty isn't available (no volumes file)
+after_profit = filtered["Difference"].sum()
+before_profit = filtered_base["Difference"].sum()
+delta_profit = after_profit - before_profit
+k4.metric(
+"Profit impact (Before → After)",
+f"£{before_profit:,.2f} → £{after_profit:,.2f}",
+delta=f"{delta_profit:+,.2f}",
+delta_color="normal",
+)
+st.info("Upload a volumes file (Qty) to see revenue/cost/margin totals and stylist summary.")
 
 
 
