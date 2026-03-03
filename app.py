@@ -305,6 +305,46 @@ if overrides_active:
     st.warning(f"Overrides active: {overrides_active} cell(s) set in Service-level overrides (these affect totals).")
 st.subheader("Stylist summary (filtered)")
 
+
+
+# ---------------- Diagnostics: what changed? ----------------
+with st.expander("Diagnostics — what changed between Before and After?", expanded=False):
+    # Compare scenario vs baseline row-by-row (Services + Stylist)
+    key_cols = ["Services", "Stylist"]
+    left = filtered_base[key_cols + (["Qty"] if "Qty" in filtered_base.columns else []) + ["Price", "Per Service"]].copy()
+    right = filtered[key_cols + (["Qty"] if "Qty" in filtered.columns else []) + ["Price", "Per Service"]].copy()
+
+    left = left.rename(columns={"Price": "Price_Before", "Per Service": "PerService_Before"})
+    right = right.rename(columns={"Price": "Price_After", "Per Service": "PerService_After"})
+
+    comp = left.merge(right, on=key_cols + (["Qty"] if "Qty" in left.columns and "Qty" in right.columns else []), how="outer")
+
+    for c in ["Price_Before","Price_After","PerService_Before","PerService_After"]:
+        comp[c] = pd.to_numeric(comp[c], errors="coerce")
+
+    comp["Price_Diff"] = comp["Price_After"] - comp["Price_Before"]
+    comp["PerService_Diff"] = comp["PerService_After"] - comp["PerService_Before"]
+
+    if "Qty" in comp.columns:
+        comp["Qty"] = pd.to_numeric(comp["Qty"], errors="coerce").fillna(0.0)
+        comp["Rev_Delta"] = comp["Qty"] * comp["Price_Diff"]
+        comp["Cost_Delta"] = comp["Qty"] * comp["PerService_Diff"]
+        comp["Margin_Delta"] = comp["Rev_Delta"] - comp["Cost_Delta"]
+
+    changed = comp[(comp["Price_Diff"].fillna(0).abs() > 1e-9) | (comp["PerService_Diff"].fillna(0).abs() > 1e-9)].copy()
+    if len(changed) == 0:
+        st.success("No per-row changes detected (Before and After match for the filtered selection).")
+    else:
+        st.warning(f"{len(changed):,} row(s) have changes. This explains any non-zero deltas.")
+        show_cols = key_cols + (["Qty"] if "Qty" in comp.columns else []) + [
+            "Price_Before","Price_After","Price_Diff",
+            "PerService_Before","PerService_After","PerService_Diff",
+        ]
+        if "Qty" in comp.columns:
+            show_cols += ["Rev_Delta","Cost_Delta","Margin_Delta"]
+        changed = changed[show_cols].sort_values(["Stylist","Services"]).reset_index(drop=True)
+        st.dataframe(changed, use_container_width=True, height=420)
+
 if "Qty" in filtered.columns:
     # Ensure numeric
     for df_ in (filtered, filtered_base):
