@@ -16,6 +16,28 @@ from transform import (
 
 st.set_page_config(page_title="Touche Hairdressing — Pricing Dashboard", page_icon="📊", layout="wide")
 
+st.markdown(
+    """
+    <style>
+      div[data-testid="stMetric"] > div {
+        padding: 6px 8px;
+      }
+      div[data-testid="stMetric"] label {
+        font-size: 0.85rem !important;
+      }
+      div[data-testid="stMetricValue"] {
+        font-size: 1.05rem !important;
+        line-height: 1.2 !important;
+      }
+      div[data-testid="stMetricDelta"] {
+        font-size: 0.85rem !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 def _require_password():
     if "auth" not in st.secrets or "password" not in st.secrets["auth"]:
         st.error('Password is not configured. Add to Streamlit Secrets:\n\n[auth]\npassword = "your-strong-password"')
@@ -289,10 +311,33 @@ filtered_base = _apply_filters_values(filtered_base)
 # ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
 st.subheader("KPIs (filtered)")
 
-k1, k2, k3, k4 = st.columns(4)
+# Row 1
+k1, k2, k3 = st.columns(3)
 k1.metric("Rows (filtered)", f"{len(filtered):,}")
 k2.metric("Services (filtered)", f"{filtered['Services'].nunique():,}")
 k3.metric("Stylists (filtered)", f"{filtered['Stylist'].nunique():,}")
+
+# Row 2 – Salon Income only
+s1, s2, s3 = st.columns(3)
+
+s1.metric(
+    "Salon Income",
+    f"£{income_after:,.2f}",
+    delta=f"{income_delta:+,.2f}",
+    delta_color="normal",
+)
+
+with st.expander("What is Salon Income?", expanded=False):
+    st.markdown(
+        """
+        **Salon Income =**
+
+        • Qty × Per Service (service charges)  
+        • + Chair Rent (Days × Rent Plus)
+
+        This represents total income received from stylists.
+        """
+    )
 
 # Revenue / Cost / Salon income (using the filtered view)
 if "Qty" in filtered.columns:
