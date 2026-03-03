@@ -84,3 +84,10 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 
 ## v11 hotfix
 - Reset scenario now removes widget keys instead of setting them, fixing Streamlit session-state conflict for global inputs.
+
+
+## v12 changes
+- Reset now reliably resets global adjustments (widgets have no `value=` defaults; state is initialized explicitly).
+- KPIs moved up directly below Global Scenario.
+- Removed per-stylist scenario controls table.
+- Added Stylist Summary table (filtered) with Qty×Price / Qty×Per Service totals and deltas.

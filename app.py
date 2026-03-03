@@ -35,21 +35,24 @@ def _require_password():
 
 def _reset_scenario():
     """
-    Streamlit widget reset strategy:
-    - Remove widget keys from session_state so widgets revert to their declared defaults.
-    - Clear editable tables so they rebuild from the latest data.
+    Reset approach:
+    - Explicitly set global widget keys (these are the widget's source of truth)
+    - Clear overrides so they rebuild from data
+    - Clear filters so they revert to defaults
     """
-    # Remove global widget keys (do NOT set them directly, avoids Streamlit "default + session_state" conflict)
-    for k in ["global_price_mode", "global_price_adj", "global_cost_mode", "global_cost_adj"]:
-        st.session_state.pop(k, None)
+    # Global scenario defaults
+    st.session_state["global_price_mode"] = "Percent"
+    st.session_state["global_price_adj"] = 0.0
+    st.session_state["global_cost_mode"] = "Percent"
+    st.session_state["global_cost_adj"] = 0.0
 
-    # Reset filters
+    # Filters
     for k in ["filter_services", "filter_stylists", "filter_qty_range", "filter_cost_range",
               "filter_hide_zero_qty", "filter_hide_missing_cost"]:
         st.session_state.pop(k, None)
 
-    # Clear tables so they rebuild from data
-    for k in ["stylist_controls", "service_overrides", "stylist_controls_editor", "service_overrides_editor"]:
+    # Overrides tables
+    for k in ["service_overrides", "service_overrides_editor"]:
         st.session_state.pop(k, None)
 
     st.rerun()
@@ -58,6 +61,7 @@ _require_password()
 
 st.title("📊 Touche Hairdressing — Pricing & Cost What‑If Dashboard")
 
+# ---------------- Sidebar: uploads + reset ----------------
 with st.sidebar:
     st.header("Uploads (required)")
     prices_file = st.file_uploader("1) Stylist Prices (xls/xlsx)", type=["xls", "xlsx"])
@@ -82,7 +86,7 @@ if prices_file is None or cost_file is None:
     st.info("Upload **Stylist Prices** and **Service Cost** to start.")
     st.stop()
 
-# --- Load inputs ---
+# ---------------- Load inputs ----------------
 price_matrix, _ = load_stylist_price_matrix(prices_file)
 service_cost = load_service_cost(cost_file)
 
@@ -103,18 +107,28 @@ base_long, validations = build_long_table(price_matrix, service_cost, qty_df)
 if allowed_stylists:
     base_long = base_long[base_long["Stylist"].isin(allowed_stylists)].copy()
 
-# --- Global scenario controls (main area) ---
+# ---------------- Global scenario controls (main area) ----------------
 st.subheader("Global scenario")
+
+# Ensure widget keys exist BEFORE widgets are created (allows programmatic reset without 'value=' conflicts)
+if "global_price_mode" not in st.session_state:
+    st.session_state["global_price_mode"] = "Percent"
+if "global_price_adj" not in st.session_state:
+    st.session_state["global_price_adj"] = 0.0
+if "global_cost_mode" not in st.session_state:
+    st.session_state["global_cost_mode"] = "Percent"
+if "global_cost_adj" not in st.session_state:
+    st.session_state["global_cost_adj"] = 0.0
 
 c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1])
 with c1:
-    price_mode = st.selectbox("Price adjustment mode", ["Percent", "Add £"], index=0, key="global_price_mode")
+    price_mode = st.selectbox("Price adjustment mode", ["Percent", "Add £"], key="global_price_mode")
 with c2:
-    price_adj = st.number_input("Price adjustment", value=0.0, step=0.5, key="global_price_adj")
+    price_adj = st.number_input("Price adjustment", step=0.5, key="global_price_adj")
 with c3:
-    cost_mode = st.selectbox("Per Service adjustment mode", ["Percent", "Add £"], index=0, key="global_cost_mode")
+    cost_mode = st.selectbox("Per Service adjustment mode", ["Percent", "Add £"], key="global_cost_mode")
 with c4:
-    cost_adj = st.number_input("Per Service adjustment", value=0.0, step=0.5, key="global_cost_adj")
+    cost_adj = st.number_input("Per Service adjustment", step=0.5, key="global_cost_adj")
 
 scenario = {
     "global_price_mode": price_mode,
@@ -123,29 +137,18 @@ scenario = {
     "global_cost_adj": float(cost_adj),
 }
 
-# --- Scenario controls ---
+# ---------------- Scenario controls (service overrides only) ----------------
 st.subheader("Scenario controls")
 
-stylists = sorted(base_long["Stylist"].dropna().astype(str).unique())
-default_stylist_controls = pd.DataFrame({"Stylist": stylists, "Price %": 0.0, "Price £": 0.0, "Cost %": 0.0, "Cost £": 0.0})
-if "stylist_controls" not in st.session_state:
-    st.session_state["stylist_controls"] = default_stylist_controls
-
-with st.expander("Scenario controls — by stylist", expanded=True):
-    st.session_state["stylist_controls"] = st.data_editor(
-        st.session_state["stylist_controls"],
-        use_container_width=True,
-        hide_index=True,
-        key="stylist_controls_editor",
-    )
-
 services = sorted(base_long["Services"].dropna().astype(str).unique())
-default_service_overrides = pd.DataFrame({"Services": services, "Override Price": np.nan, "Override Per Service": np.nan})
+default_service_overrides = pd.DataFrame(
+    {"Services": services, "Override Price": np.nan, "Override Per Service": np.nan}
+)
 if "service_overrides" not in st.session_state:
     st.session_state["service_overrides"] = default_service_overrides
 
 with st.expander("Service-level overrides (optional) — set absolute values", expanded=False):
-    st.caption("If you set an override, it becomes the final value (global/stylist adjustments are not applied on top).")
+    st.caption("If you set an override, it becomes the final value (global adjustments are not applied on top).")
     st.session_state["service_overrides"] = st.data_editor(
         st.session_state["service_overrides"],
         use_container_width=True,
@@ -153,37 +156,38 @@ with st.expander("Service-level overrides (optional) — set absolute values", e
         key="service_overrides_editor",
     )
 
-# --- Apply scenario + baseline ---
+# No per-stylist adjustments table (requested). Use a zeroed controls table internally.
+stylists = sorted(base_long["Stylist"].dropna().astype(str).unique())
+stylist_controls = pd.DataFrame(
+    {"Stylist": stylists, "Price %": 0.0, "Price £": 0.0, "Cost %": 0.0, "Cost £": 0.0}
+)
+
+# ---------------- Apply scenario + baseline ----------------
 result = apply_scenario(
     base_long=base_long,
     scenario=scenario,
-    stylist_controls=st.session_state["stylist_controls"],
+    stylist_controls=stylist_controls,
     service_overrides=st.session_state["service_overrides"],
 )
 
-baseline_scenario = {"global_price_mode": "Percent", "global_price_adj": 0.0, "global_cost_mode": "Percent", "global_cost_adj": 0.0}
-baseline_controls = st.session_state["stylist_controls"].copy()
-for c in ["Price %", "Price £", "Cost %", "Cost £"]:
-    if c in baseline_controls.columns:
-        baseline_controls[c] = 0.0
-baseline_overrides = st.session_state["service_overrides"].copy()
-for c in ["Override Price", "Override Per Service"]:
-    if c in baseline_overrides.columns:
-        baseline_overrides[c] = np.nan
-
+baseline_scenario = {
+    "global_price_mode": "Percent",
+    "global_price_adj": 0.0,
+    "global_cost_mode": "Percent",
+    "global_cost_adj": 0.0,
+}
 baseline_result = apply_scenario(
     base_long=base_long,
     scenario=baseline_scenario,
-    stylist_controls=baseline_controls,
-    service_overrides=baseline_overrides,
+    stylist_controls=stylist_controls,
+    service_overrides=default_service_overrides,  # baseline: no overrides
 )
 
-# --- Filters (affect KPIs + view) ---
+# ---------------- Filters (affect KPIs + view) ----------------
 st.subheader("Scenario table")
 
 filtered = result.copy()
 filtered_base = baseline_result.copy()
-
 
 with st.expander("Filters", expanded=False):
     svc_all = sorted(filtered["Services"].dropna().astype(str).unique())
@@ -201,25 +205,13 @@ with st.expander("Filters", expanded=False):
     qty_range = None
     if "Qty" in filtered.columns and len(filtered):
         qmin, qmax = int(filtered["Qty"].min()), int(filtered["Qty"].max())
-        qty_range = st.slider(
-            "Qty range",
-            min_value=qmin,
-            max_value=qmax,
-            value=(qmin, qmax),
-            key="filter_qty_range",
-        )
+        qty_range = st.slider("Qty range", min_value=qmin, max_value=qmax, value=(qmin, qmax), key="filter_qty_range")
 
     cost_range = None
     if len(filtered) and filtered["Per Service"].notna().any():
         cmin = float(filtered["Per Service"].min())
         cmax = float(filtered["Per Service"].max())
-        cost_range = st.slider(
-            "Per Service range",
-            min_value=cmin,
-            max_value=cmax,
-            value=(cmin, cmax),
-            key="filter_cost_range",
-        )
+        cost_range = st.slider("Per Service range", min_value=cmin, max_value=cmax, value=(cmin, cmax), key="filter_cost_range")
 
 def _apply_filters_values(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -242,10 +234,8 @@ def _apply_filters_values(df: pd.DataFrame) -> pd.DataFrame:
 
 filtered = _apply_filters_values(filtered)
 filtered_base = _apply_filters_values(filtered_base)
-st.caption(f"Showing {len(filtered):,} / {len(result):,} rows after filters.")
-st.dataframe(filtered, use_container_width=True, height=520)
 
-# --- KPIs (use filtered) ---
+# ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
 st.subheader("KPIs (filtered)")
 
 k1, k2, k3, k4 = st.columns(4)
@@ -258,7 +248,6 @@ before_profit = filtered_base["Weighted Difference"].sum() if "Weighted Differen
 delta_profit = after_profit - before_profit
 k4.metric("Profit impact (Before → After)", f"£{before_profit:,.2f} → £{after_profit:,.2f}", delta=f"£{delta_profit:,.2f}")
 
-# Qty * Per Service KPI
 if "Qty" in filtered.columns:
     c1, c2, c3 = st.columns(3)
     after_cost = (filtered["Qty"] * filtered["Per Service"]).sum()
@@ -268,9 +257,58 @@ if "Qty" in filtered.columns:
     c2.metric("Qty × Per Service (After)", f"£{after_cost:,.2f}")
     c3.metric("Qty × Per Service (Delta)", f"£{delta_cost:,.2f}")
 else:
-    st.info("Upload a volumes file (Qty) to see the Qty × Per Service totals.")
+    st.info("Upload a volumes file (Qty) to see the Qty × Per Service totals and stylist summary.")
 
-# --- Validation ---
+# ---------------- Stylist summary (under KPIs) ----------------
+st.subheader("Stylist summary (filtered)")
+
+if "Qty" in filtered.columns:
+    # Ensure numeric
+    for df_ in (filtered, filtered_base):
+        df_["Qty"] = pd.to_numeric(df_["Qty"], errors="coerce").fillna(0)
+        df_["Price"] = pd.to_numeric(df_["Price"], errors="coerce")
+        df_["Per Service"] = pd.to_numeric(df_["Per Service"], errors="coerce")
+
+    # Totals
+    filtered["QtyPriceTotal"] = filtered["Qty"] * filtered["Price"]
+    filtered_base["QtyPriceTotal"] = filtered_base["Qty"] * filtered_base["Price"]
+
+    filtered["QtyCostTotal"] = filtered["Qty"] * filtered["Per Service"]
+    filtered_base["QtyCostTotal"] = filtered_base["Qty"] * filtered_base["Per Service"]
+
+    after_by = filtered.groupby("Stylist", as_index=False).agg(
+        QtyPriceTotal=("QtyPriceTotal", "sum"),
+        QtyCostTotal=("QtyCostTotal", "sum"),
+    )
+    before_by = filtered_base.groupby("Stylist", as_index=False).agg(
+        QtyPriceTotal_Before=("QtyPriceTotal", "sum"),
+        QtyCostTotal_Before=("QtyCostTotal", "sum"),
+    )
+
+    summ = after_by.merge(before_by, on="Stylist", how="left")
+    summ["Price Difference"] = summ["QtyPriceTotal"] - summ["QtyPriceTotal_Before"]
+    summ["Value Difference"] = summ["QtyCostTotal"] - summ["QtyCostTotal_Before"]
+
+    # Rename columns to requested names
+    summ.rename(
+        columns={
+            "QtyPriceTotal": "Qty * Price Total",
+            "QtyCostTotal": "Qty * Per Service Total",
+        },
+        inplace=True,
+    )
+    summ = summ[["Stylist", "Qty * Price Total", "Price Difference", "Qty * Per Service Total", "Value Difference"]]
+    summ = summ.sort_values("Stylist").reset_index(drop=True)
+
+    st.dataframe(summ, use_container_width=True, height=420)
+else:
+    st.info("No volumes file loaded — stylist summary requires Qty.")
+
+# ---------------- Scenario table view ----------------
+st.caption(f"Showing {len(filtered):,} / {len(result):,} rows after filters.")
+st.dataframe(filtered, use_container_width=True, height=520)
+
+# ---------------- Validation ----------------
 with st.expander("Validation checks"):
     if validations.get("missing_cost_services"):
         st.warning(f"{len(validations['missing_cost_services']):,} service(s) in prices are missing Per Service cost.")
@@ -293,14 +331,15 @@ with st.expander("Validation checks"):
     else:
         st.info("No volumes file uploaded; weighted checks disabled.")
 
-# --- Download ---
+# ---------------- Download ----------------
 st.subheader("Download")
 
 out = io.BytesIO()
 with pd.ExcelWriter(out, engine="openpyxl") as writer:
     result.to_excel(writer, index=False, sheet_name="Scenario Output")
     filtered.to_excel(writer, index=False, sheet_name="Filtered View")
-    st.session_state["stylist_controls"].to_excel(writer, index=False, sheet_name="Stylist Controls")
+    if "Qty" in filtered.columns:
+        summ.to_excel(writer, index=False, sheet_name="Stylist Summary")
     st.session_state["service_overrides"].to_excel(writer, index=False, sheet_name="Service Overrides")
     price_matrix.to_excel(writer, index=False, sheet_name="Input_StylistPrices")
     service_cost.to_excel(writer, index=False, sheet_name="Input_ServiceCost")
