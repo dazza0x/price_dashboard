@@ -445,3 +445,87 @@ else:
     st.info("Upload a volumes file (Qty) to see stylist summary.")
 
 
+
+
+# ---------------- Download ----------------
+st.subheader("Downloads")
+
+# 1) Full scenario workbook (same as before)
+out = io.BytesIO()
+with pd.ExcelWriter(out, engine="openpyxl") as writer:
+    result.to_excel(writer, index=False, sheet_name="Scenario Output")
+    filtered.to_excel(writer, index=False, sheet_name="Filtered View")
+    if "Qty" in filtered.columns:
+        summ.to_excel(writer, index=False, sheet_name="Stylist Summary")
+    st.session_state["service_overrides"].to_excel(writer, index=False, sheet_name="Service Overrides")
+    price_matrix.to_excel(writer, index=False, sheet_name="Input_StylistPrices")
+    service_cost.to_excel(writer, index=False, sheet_name="Input_ServiceCost")
+    if qty_df is not None:
+        qty_df.to_excel(writer, index=False, sheet_name="Input_Volumes")
+    rent_days_df.to_excel(writer, index=False, sheet_name="Input_ChairRent")
+out.seek(0)
+
+st.download_button(
+    "Download full scenario workbook (.xlsx)",
+    data=out,
+    file_name="Touche Pricing Scenario.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+# 2) Service price list (before vs after) for SalonIQ updates
+# We take service-level values from baseline_result vs result.
+svc_before = (
+    baseline_result.groupby("Services", as_index=False)
+    .agg(Price_Before=("Price", "mean"), PerService_Before=("Per Service", "mean"))
+)
+svc_after = (
+    result.groupby("Services", as_index=False)
+    .agg(Price_After=("Price", "mean"), PerService_After=("Per Service", "mean"))
+)
+svc_list = svc_before.merge(svc_after, on="Services", how="outer")
+for c in ["Price_Before","PerService_Before","Price_After","PerService_After"]:
+    svc_list[c] = pd.to_numeric(svc_list[c], errors="coerce")
+svc_list["Price_Delta"] = svc_list["Price_After"] - svc_list["Price_Before"]
+svc_list["PerService_Delta"] = svc_list["PerService_After"] - svc_list["PerService_Before"]
+svc_list = svc_list.sort_values("Services").reset_index(drop=True)
+svc_list = svc_list.round(2)
+
+out2 = io.BytesIO()
+with pd.ExcelWriter(out2, engine="openpyxl") as writer:
+    svc_list.to_excel(writer, index=False, sheet_name="Service Price List")
+out2.seek(0)
+
+st.download_button(
+    "Download Service Price List (Before vs After) — SalonIQ (.xlsx)",
+    data=out2,
+    file_name="Service Price List - Before vs After.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+# 3) Stylist service price list (After) to share with stylists
+# Pivot: rows=Services, columns=Stylist, values=Price (After).
+stylist_prices = result.pivot_table(
+    index="Services",
+    columns="Stylist",
+    values="Price",
+    aggfunc="mean",
+)
+stylist_prices = stylist_prices.sort_index().reset_index()
+
+per_service_after = (
+    result.groupby("Services", as_index=False)
+    .agg(PerService_After=("Per Service", "mean"))
+).sort_values("Services").reset_index(drop=True)
+
+out3 = io.BytesIO()
+with pd.ExcelWriter(out3, engine="openpyxl") as writer:
+    stylist_prices.round(2).to_excel(writer, index=False, sheet_name="Stylist Prices (After)")
+    per_service_after.round(2).to_excel(writer, index=False, sheet_name="Per Service (After)")
+out3.seek(0)
+
+st.download_button(
+    "Download Stylist Service Price List (After) (.xlsx)",
+    data=out3,
+    file_name="Stylist Service Price List - After.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)

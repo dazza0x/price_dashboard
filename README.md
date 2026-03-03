@@ -130,3 +130,9 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - KPI font sizes reduced via CSS.
 - Salon Income moved under the Rows/Services/Stylists row.
 - Salon Income label shortened; explanation moved to a tooltip line.
+
+
+## v18 downloads
+- Restored full scenario workbook download.
+- Added Service Price List (Before vs After) for SalonIQ updates.
+- Added Stylist Service Price List (After) for sharing with stylists.
