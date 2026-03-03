@@ -112,3 +112,7 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - Chair rent totals are included in the top-line Salon income KPI (Per Service + Rent).
 - Stylist summary includes Total Rent and Salon Income total.
 - Reset scenario resets chair rent inputs.
+
+
+## v16.1
+- Fixed KPI indentation error.
