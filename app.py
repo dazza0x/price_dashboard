@@ -46,6 +46,11 @@ def _reset_scenario():
     st.session_state["global_cost_mode"] = "Percent"
     st.session_state["global_cost_adj"] = 0.0
 
+    # Chair rent defaults
+    st.session_state["rent_plus"] = 0.0
+    st.session_state.pop("rent_days", None)
+    st.session_state.pop("rent_days_editor", None)
+
     # Filters
     for k in ["filter_services", "filter_stylists", "filter_qty_range", "filter_cost_range",
               "filter_hide_zero_qty", "filter_hide_missing_cost"]:
@@ -62,6 +67,19 @@ _require_password()
 st.title("📊 Touche Hairdressing — Pricing & Cost What‑If Dashboard")
 
 # ---------------- Sidebar: uploads + reset ----------------
+
+
+# ---------------- Chair rent inputs ----------------
+st.subheader("Chair rent")
+
+# Rent Plus applies to all stylists
+if "rent_plus" not in st.session_state:
+    st.session_state["rent_plus"] = 0.0
+
+rent_plus = st.number_input("Rent Plus (£ per day)", step=1.0, key="rent_plus")
+
+# Days table (one row per stylist). We build it later once stylists are known, so initialise placeholder here.
+# The real table is created after data is loaded (so we know stylist list).
 with st.sidebar:
     st.header("Uploads (required)")
     prices_file = st.file_uploader("1) Stylist Prices (xls/xlsx)", type=["xls", "xlsx"])
@@ -120,6 +138,11 @@ if "global_cost_mode" not in st.session_state:
 if "global_cost_adj" not in st.session_state:
     st.session_state["global_cost_adj"] = 0.0
 
+    # Chair rent defaults
+    st.session_state["rent_plus"] = 0.0
+    st.session_state.pop("rent_days", None)
+    st.session_state.pop("rent_days_editor", None)
+
 c1, c2, c3, c4 = st.columns([1.2, 1, 1.2, 1])
 with c1:
     price_mode = st.selectbox("Price adjustment mode", ["Percent", "Add £"], key="global_price_mode")
@@ -158,6 +181,27 @@ with st.expander("Service-level overrides (optional) — set absolute values", e
 
 # No per-stylist adjustments table (requested). Use a zeroed controls table internally.
 stylists = sorted(base_long["Stylist"].dropna().astype(str).unique())
+
+# Chair rent table (days worked) — editable
+default_rent_days = pd.DataFrame({"Stylist": stylists, "Days": 0.0})
+if "rent_days" not in st.session_state:
+    st.session_state["rent_days"] = default_rent_days
+
+st.session_state["rent_days"] = st.data_editor(
+    st.session_state["rent_days"],
+    use_container_width=True,
+    hide_index=True,
+    key="rent_days_editor",
+)
+
+rent_days_df = st.session_state["rent_days"].copy()
+rent_days_df["Stylist"] = rent_days_df["Stylist"].astype(str).str.strip()
+rent_days_df["Days"] = pd.to_numeric(rent_days_df["Days"], errors="coerce").fillna(0.0)
+rent_days_df["Total Rent"] = (rent_days_df["Days"] * float(rent_plus)).round(2)
+
+# Display computed rent
+st.dataframe(rent_days_df[["Stylist", "Days", "Total Rent"]], use_container_width=True, height=260)
+
 stylist_controls = pd.DataFrame(
     {"Stylist": stylists, "Price %": 0.0, "Price £": 0.0, "Cost %": 0.0, "Cost £": 0.0}
 )
@@ -263,19 +307,31 @@ if "Qty" in filtered.columns:
     rev_delta = rev_after - rev_before
 
     cost_after = (filtered["Qty"] * filtered["Per Service"]).sum()
-    cost_before = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
-    cost_delta = cost_after - cost_before
+cost_before = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
+cost_delta = cost_after - cost_before
 
-    margin_after = rev_after - cost_after
-    margin_before = rev_before - cost_before
-    margin_delta = margin_after - margin_before
+# Chair rent totals (filtered selection)
+rent_map = rent_days_df.set_index("Stylist")["Total Rent"].to_dict()
+rent_after = filtered["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
+rent_before = filtered_base["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
+rent_delta = rent_after - rent_before  # usually 0 unless filters differ
+
+# Salon income = (Per Service charges) + (Chair rent)
+income_after = cost_after + rent_after
+income_before = cost_before + rent_before
+income_delta = income_after - income_before
+
+# Stylist revenue (client pays stylist) still shown separately
+margin_after = rev_after - cost_after
+margin_before = rev_before - cost_before
+margin_delta = margin_after - margin_before
 
     # Rightmost KPI shows Margin impact (what you "make" after paying Per Service)
     # Note: This is NOT the same as revenue (Qty × Price).
     k4.metric(
-        "Margin impact (Before → After)",
-        f"£{margin_before:,.2f} → £{margin_after:,.2f}",
-        delta=f"{margin_delta:+,.2f}",
+        "Salon income (Per Service + Rent)",
+        f"£{income_before:,.2f} → £{income_after:,.2f}",
+        delta=f"{income_delta:+,.2f}",
         delta_color="normal",
     )
 
@@ -301,6 +357,12 @@ else:
     )
     st.info("Upload a volumes file (Qty) to see revenue/cost/margin totals and stylist summary.")
 
+
+
+rnt1, rnt2, rnt3 = st.columns(3)
+rnt1.metric("Chair rent (Before)", f"£{rent_before:,.2f}")
+rnt2.metric("Chair rent (After)", f"£{rent_after:,.2f}")
+rnt3.metric("Chair rent (Delta)", f"£{rent_delta:,.2f}", delta=f"{rent_delta:+,.2f}", delta_color="normal")
 # Helpful indicator: overrides in effect
 overrides_active = 0
 if "service_overrides" in st.session_state:
@@ -385,8 +447,14 @@ if "Qty" in filtered.columns:
         },
         inplace=True,
     )
-    summ = summ[["Stylist", "Qty * Price Total", "Price Difference", "Qty * Per Service Total", "Value Difference"]]
-    summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]] = summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]].round(2)
+    summ = summ.merge(rent_days_df[["Stylist","Total Rent"]], on="Stylist", how="left")
+summ["Total Rent"] = summ["Total Rent"].fillna(0.0)
+summ["Salon Income Total"] = summ["Qty * Per Service Total"] + summ["Total Rent"]
+summ["Income Difference"] = summ["Value Difference"]  # rent constant unless you change rent inputs
+summ = summ[["Stylist", "Qty * Price Total", "Price Difference", "Qty * Per Service Total", "Value Difference", "Total Rent", "Salon Income Total", "Income Difference"]]
+    summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference","Total Rent","Salon Income Total","Income Difference"]] = summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference","Total Rent","Salon Income Total","Income Difference"]].round(2)
+
+    #  summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]].round(2)
 
     summ = summ.sort_values("Stylist").reset_index(drop=True)
 
@@ -433,6 +501,7 @@ with pd.ExcelWriter(out, engine="openpyxl") as writer:
     st.session_state["service_overrides"].to_excel(writer, index=False, sheet_name="Service Overrides")
     price_matrix.to_excel(writer, index=False, sheet_name="Input_StylistPrices")
     service_cost.to_excel(writer, index=False, sheet_name="Input_ServiceCost")
+    rent_days_df.to_excel(writer, index=False, sheet_name="Input_ChairRent")
     if qty_df is not None:
         qty_df.to_excel(writer, index=False, sheet_name="Input_Volumes")
 

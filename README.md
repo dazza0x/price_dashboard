@@ -105,3 +105,10 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 
 ## v15 filter bounds fix
 - Filter range bounds are now computed from BOTH scenario + baseline tables to prevent baseline-only rows being excluded by default (which could create a false Qty×Price delta).
+
+
+## v16 chair rent
+- Added chair rent section above Global Scenario: Rent Plus + editable Days per stylist.
+- Chair rent totals are included in the top-line Salon income KPI (Per Service + Rent).
+- Stylist summary includes Total Rent and Salon Income total.
+- Reset scenario resets chair rent inputs.
