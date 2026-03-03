@@ -120,3 +120,13 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 
 ## v16.3
 - Rebuilt Stylist Summary block to fix indentation error.
+
+
+## v16.4
+- Fixed Streamlit session_state error caused by mis-indented chair rent default assignment.
+
+
+## v17 KPI layout
+- KPI font sizes reduced via CSS.
+- Salon Income moved under the Rows/Services/Stylists row.
+- Salon Income label shortened; explanation moved to a tooltip line.

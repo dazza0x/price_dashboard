@@ -16,27 +16,22 @@ from transform import (
 
 st.set_page_config(page_title="Touche Hairdressing — Pricing Dashboard", page_icon="📊", layout="wide")
 
+
 st.markdown(
     """
     <style>
-      /* Make KPI (st.metric) text smaller to avoid overflow */
-      div[data-testid="stMetric"] > div {
-        padding: 6px 8px;
-      }
-      div[data-testid="stMetric"] label {
-        font-size: 0.85rem !important;
-      }
-      div[data-testid="stMetricValue"] {
-        font-size: 1.10rem !important;
-        line-height: 1.2 !important;
-      }
-      div[data-testid="stMetricDelta"] {
-        font-size: 0.85rem !important;
-      }
+      /* Smaller KPI (st.metric) typography + tighter spacing */
+      div[data-testid="stMetric"] > div { padding: 4px 6px; }
+      div[data-testid="stMetric"] label { font-size: 0.72rem !important; }
+      div[data-testid="stMetricValue"] { font-size: 0.92rem !important; line-height: 1.15 !important; }
+      div[data-testid="stMetricDelta"] { font-size: 0.72rem !important; }
+      /* Reduce vertical gap between KPI rows */
+      div[data-testid="stVerticalBlock"] div[data-testid="stMetric"] { margin-bottom: 0.25rem; }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
 
 def _require_password():
     if "auth" not in st.secrets or "password" not in st.secrets["auth"]:
@@ -301,33 +296,15 @@ filtered_base = _apply_filters_values(filtered_base)
 # ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
 
 # ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
+st.subheader("KPIs (filtered)")
+
+# Row 1
 k1, k2, k3 = st.columns(3)
 k1.metric("Rows (filtered)", f"{len(filtered):,}")
 k2.metric("Services (filtered)", f"{filtered['Services'].nunique():,}")
 k3.metric("Stylists (filtered)", f"{filtered['Stylist'].nunique():,}")
 
-# Second row: put Salon income aligned with the same width as the first row
-s1, s2, s3 = st.columns(3)
-s1.metric(
-    "Salon income (Per Service + Rent)",
-    f"£{income_before:,.2f} → £{income_after:,.2f}",
-    delta=f"{income_delta:+,.2f}",
-    delta_color="normal",
-)
-
-with st.expander("What is Salon Income?", expanded=False):
-    st.markdown(
-        """
-        **Salon Income =**
-
-        • Qty × Per Service (service charges)  
-        • + Chair Rent (Days × Rent Plus)
-
-        This represents total income received from stylists.
-        """
-    )
-
-# Revenue / Cost / Salon income (using the filtered view)
+# Revenue / Service Charges / Chair Rent / Salon Income (using the filtered view)
 if "Qty" in filtered.columns:
     # Ensure numeric
     for df_ in (filtered, filtered_base):
@@ -356,39 +333,53 @@ if "Qty" in filtered.columns:
     income_before = svc_before + rent_before
     income_delta = income_after - income_before
 
-    k4.metric(
-        "Salon income (Per Service + Rent)",
+    # Row 2 — Salon Income (clean + aligned)
+    s1, s2, s3 = st.columns(3)
+    s1.metric(
+        "Salon Income",
         f"£{income_before:,.2f} → £{income_after:,.2f}",
         delta=f"{income_delta:+,.2f}",
         delta_color="normal",
     )
 
+    # Compact tooltip line (no clutter)
+    st.markdown(
+        '<span title="Salon Income = (Qty × Per Service) + (Chair Rent). This is what the stylist pays the salon.">ℹ️ What is Salon Income?</span>',
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    # Detail rows
     r1, r2, r3 = st.columns(3)
     r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
     r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
     r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
 
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Qty × Per Service (Before)", f"£{svc_before:,.2f}")
-    s2.metric("Qty × Per Service (After)", f"£{svc_after:,.2f}")
-    s3.metric("Qty × Per Service (Delta)", f"£{svc_delta:,.2f}", delta=f"{svc_delta:+,.2f}", delta_color="normal")
+    s1a, s2a, s3a = st.columns(3)
+    s1a.metric("Qty × Per Service (Before)", f"£{svc_before:,.2f}")
+    s2a.metric("Qty × Per Service (After)", f"£{svc_after:,.2f}")
+    s3a.metric("Qty × Per Service (Delta)", f"£{svc_delta:,.2f}", delta=f"{svc_delta:+,.2f}", delta_color="normal")
 
     rt1, rt2, rt3 = st.columns(3)
     rt1.metric("Chair rent (Before)", f"£{rent_before:,.2f}")
     rt2.metric("Chair rent (After)", f"£{rent_after:,.2f}")
     rt3.metric("Chair rent (Delta)", f"£{rent_delta:,.2f}", delta=f"{rent_delta:+,.2f}", delta_color="normal")
+
 else:
     # Fallback when Qty isn't available (no volumes file)
     after_profit = filtered["Difference"].sum()
     before_profit = filtered_base["Difference"].sum()
     delta_profit = after_profit - before_profit
-    k4.metric(
-        "Profit impact (Before → After)",
+
+    s1, s2, s3 = st.columns(3)
+    s1.metric(
+        "Profit impact",
         f"£{before_profit:,.2f} → £{after_profit:,.2f}",
         delta=f"{delta_profit:+,.2f}",
         delta_color="normal",
     )
-    st.info("Upload a volumes file (Qty) to see revenue, service charges, chair rent and stylist summary.")
+    st.info("Upload a volumes file (Qty) to see Salon Income, service charges, chair rent, and stylist summary.")
 
 # Helpful indicator: overrides in effect
 overrides_active = 0
