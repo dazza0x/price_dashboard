@@ -114,5 +114,5 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - Reset scenario resets chair rent inputs.
 
 
-## v16.1
-- Fixed KPI indentation error.
+## v16.2
+- Fixed KPI section indentation (Streamlit IndentationError).

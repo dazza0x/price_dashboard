@@ -294,7 +294,7 @@ k1.metric("Rows (filtered)", f"{len(filtered):,}")
 k2.metric("Services (filtered)", f"{filtered['Services'].nunique():,}")
 k3.metric("Stylists (filtered)", f"{filtered['Stylist'].nunique():,}")
 
-# Revenue / Cost / Margin (using the filtered view)
+# Revenue / Cost / Salon income (using the filtered view)
 if "Qty" in filtered.columns:
     # Ensure numeric
     for df_ in (filtered, filtered_base):
@@ -302,67 +302,61 @@ if "Qty" in filtered.columns:
         df_["Price"] = pd.to_numeric(df_["Price"], errors="coerce")
         df_["Per Service"] = pd.to_numeric(df_["Per Service"], errors="coerce")
 
+    # Client-facing revenue (what stylist charges)
     rev_after = (filtered["Qty"] * filtered["Price"]).sum()
     rev_before = (filtered_base["Qty"] * filtered_base["Price"]).sum()
     rev_delta = rev_after - rev_before
 
-    cost_after = (filtered["Qty"] * filtered["Per Service"]).sum()
-cost_before = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
-cost_delta = cost_after - cost_before
+    # Service charges payable to salon (Per Service)
+    svc_after = (filtered["Qty"] * filtered["Per Service"]).sum()
+    svc_before = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
+    svc_delta = svc_after - svc_before
 
-# Chair rent totals (filtered selection)
-rent_map = rent_days_df.set_index("Stylist")["Total Rent"].to_dict()
-rent_after = filtered["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
-rent_before = filtered_base["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
-rent_delta = rent_after - rent_before  # usually 0 unless filters differ
+    # Chair rent (one value per stylist in the filtered selection)
+    rent_map = rent_days_df.set_index("Stylist")["Total Rent"].to_dict()
+    rent_after = filtered["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
+    rent_before = filtered_base["Stylist"].map(rent_map).fillna(0.0).drop_duplicates().sum()
+    rent_delta = rent_after - rent_before
 
-# Salon income = (Per Service charges) + (Chair rent)
-income_after = cost_after + rent_after
-income_before = cost_before + rent_before
-income_delta = income_after - income_before
+    # Salon income = service charges + chair rent
+    income_after = svc_after + rent_after
+    income_before = svc_before + rent_before
+    income_delta = income_after - income_before
 
-# Stylist revenue (client pays stylist) still shown separately
-margin_after = rev_after - cost_after
-margin_before = rev_before - cost_before
-margin_delta = margin_after - margin_before
+    k4.metric(
+        "Salon income (Per Service + Rent)",
+        f"£{income_before:,.2f} → £{income_after:,.2f}",
+        delta=f"{income_delta:+,.2f}",
+        delta_color="normal",
+    )
 
-# Rightmost KPI shows Margin impact (what you "make" after paying Per Service)
-# Note: This is NOT the same as revenue (Qty × Price).
-k4.metric(
-"Salon income (Per Service + Rent)",
-f"£{income_before:,.2f} → £{income_after:,.2f}",
-delta=f"{income_delta:+,.2f}",
-delta_color="normal",
-)
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
+    r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
+    r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
 
-r1, r2, r3 = st.columns(3)
-r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
-r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
-r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Qty × Per Service (Before)", f"£{svc_before:,.2f}")
+    s2.metric("Qty × Per Service (After)", f"£{svc_after:,.2f}")
+    s3.metric("Qty × Per Service (Delta)", f"£{svc_delta:,.2f}", delta=f"{svc_delta:+,.2f}", delta_color="normal")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Qty × Per Service (Before)", f"£{cost_before:,.2f}")
-c2.metric("Qty × Per Service (After)", f"£{cost_after:,.2f}")
-c3.metric("Qty × Per Service (Delta)", f"£{cost_delta:,.2f}", delta=f"{cost_delta:+,.2f}", delta_color="normal")
+    rt1, rt2, rt3 = st.columns(3)
+    rt1.metric("Chair rent (Before)", f"£{rent_before:,.2f}")
+    rt2.metric("Chair rent (After)", f"£{rent_after:,.2f}")
+    rt3.metric("Chair rent (Delta)", f"£{rent_delta:,.2f}", delta=f"{rent_delta:+,.2f}", delta_color="normal")
 else:
-# Fallback when Qty isn't available (no volumes file)
-after_profit = filtered["Difference"].sum()
-before_profit = filtered_base["Difference"].sum()
-delta_profit = after_profit - before_profit
-k4.metric(
-"Profit impact (Before → After)",
-f"£{before_profit:,.2f} → £{after_profit:,.2f}",
-delta=f"{delta_profit:+,.2f}",
-delta_color="normal",
-)
-st.info("Upload a volumes file (Qty) to see revenue/cost/margin totals and stylist summary.")
+    # Fallback when Qty isn't available (no volumes file)
+    after_profit = filtered["Difference"].sum()
+    before_profit = filtered_base["Difference"].sum()
+    delta_profit = after_profit - before_profit
+    k4.metric(
+        "Profit impact (Before → After)",
+        f"£{before_profit:,.2f} → £{after_profit:,.2f}",
+        delta=f"{delta_profit:+,.2f}",
+        delta_color="normal",
+    )
+    st.info("Upload a volumes file (Qty) to see revenue, service charges, chair rent and stylist summary.")
 
-
-
-rnt1, rnt2, rnt3 = st.columns(3)
-rnt1.metric("Chair rent (Before)", f"£{rent_before:,.2f}")
-rnt2.metric("Chair rent (After)", f"£{rent_after:,.2f}")
-rnt3.metric("Chair rent (Delta)", f"£{rent_delta:,.2f}", delta=f"{rent_delta:+,.2f}", delta_color="normal")
 # Helpful indicator: overrides in effect
 overrides_active = 0
 if "service_overrides" in st.session_state:
@@ -370,6 +364,7 @@ if "service_overrides" in st.session_state:
     overrides_active = int(ov["Override Price"].notna().sum() + ov["Override Per Service"].notna().sum())
 if overrides_active:
     st.warning(f"Overrides active: {overrides_active} cell(s) set in Service-level overrides (these affect totals).")
+
 st.subheader("Stylist summary (filtered)")
 
 
