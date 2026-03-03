@@ -97,3 +97,11 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - KPI renamed to Margin impact and now displays Revenue (Qty×Price), Cost (Qty×Per Service), and Margin.
 - Delta arrows/colors fixed by using signed delta strings without currency symbols.
 - Warns when service overrides are active.
+
+
+## v14 diagnostics
+- Added a Diagnostics expander to show exactly which Services/Stylist rows changed in Price and/or Per Service (and the weighted impact).
+
+
+## v15 filter bounds fix
+- Filter range bounds are now computed from BOTH scenario + baseline tables to prevent baseline-only rows being excluded by default (which could create a false Qty×Price delta).

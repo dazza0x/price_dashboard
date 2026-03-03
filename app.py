@@ -189,7 +189,10 @@ st.subheader("Scenario table")
 filtered = result.copy()
 filtered_base = baseline_result.copy()
 
+
 with st.expander("Filters", expanded=False):
+    # NOTE: bounds are computed from BOTH scenario + baseline so the default range does not accidentally
+    # filter out baseline rows (which would create a fake revenue delta).
     svc_all = sorted(filtered["Services"].dropna().astype(str).unique())
     sty_all = sorted(filtered["Stylist"].dropna().astype(str).unique())
 
@@ -202,17 +205,19 @@ with st.expander("Filters", expanded=False):
 
     hide_missing_cost = st.checkbox("Hide rows with missing Per Service", value=True, key="filter_hide_missing_cost")
 
+    # Combine for bounds
+    both = pd.concat([filtered, filtered_base], ignore_index=True)
+
     qty_range = None
-    if "Qty" in filtered.columns and len(filtered):
-        qmin, qmax = int(filtered["Qty"].min()), int(filtered["Qty"].max())
+    if "Qty" in both.columns and len(both):
+        qmin, qmax = int(pd.to_numeric(both["Qty"], errors="coerce").fillna(0).min()), int(pd.to_numeric(both["Qty"], errors="coerce").fillna(0).max())
         qty_range = st.slider("Qty range", min_value=qmin, max_value=qmax, value=(qmin, qmax), key="filter_qty_range")
 
     cost_range = None
-    if len(filtered) and filtered["Per Service"].notna().any():
-        cmin = float(filtered["Per Service"].min())
-        cmax = float(filtered["Per Service"].max())
+    if len(both) and pd.to_numeric(both["Per Service"], errors="coerce").notna().any():
+        cmin = float(pd.to_numeric(both["Per Service"], errors="coerce").min())
+        cmax = float(pd.to_numeric(both["Per Service"], errors="coerce").max())
         cost_range = st.slider("Per Service range", min_value=cmin, max_value=cmax, value=(cmin, cmax), key="filter_cost_range")
-
 def _apply_filters_values(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out = out[out["Services"].astype(str).isin(sel_services)]
