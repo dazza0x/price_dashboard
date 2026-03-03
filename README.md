@@ -91,3 +91,9 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 - KPIs moved up directly below Global Scenario.
 - Removed per-stylist scenario controls table.
 - Added Stylist Summary table (filtered) with Qty×Price / Qty×Per Service totals and deltas.
+
+
+## v13 metrics clarity
+- KPI renamed to Margin impact and now displays Revenue (Qty×Price), Cost (Qty×Per Service), and Margin.
+- Delta arrows/colors fixed by using signed delta strings without currency symbols.
+- Warns when service overrides are active.

@@ -236,6 +236,8 @@ filtered = _apply_filters_values(filtered)
 filtered_base = _apply_filters_values(filtered_base)
 
 # ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
+
+# ---------------- KPIs (filtered) — moved up under Global Scenario ----------------
 st.subheader("KPIs (filtered)")
 
 k1, k2, k3, k4 = st.columns(4)
@@ -243,23 +245,64 @@ k1.metric("Rows (filtered)", f"{len(filtered):,}")
 k2.metric("Services (filtered)", f"{filtered['Services'].nunique():,}")
 k3.metric("Stylists (filtered)", f"{filtered['Stylist'].nunique():,}")
 
-after_profit = filtered["Weighted Difference"].sum() if "Weighted Difference" in filtered.columns else filtered["Difference"].sum()
-before_profit = filtered_base["Weighted Difference"].sum() if "Weighted Difference" in filtered_base.columns else filtered_base["Difference"].sum()
-delta_profit = after_profit - before_profit
-k4.metric("Profit impact (Before → After)", f"£{before_profit:,.2f} → £{after_profit:,.2f}", delta=f"£{delta_profit:,.2f}")
-
+# Revenue / Cost / Margin (using the filtered view)
 if "Qty" in filtered.columns:
-    c1, c2, c3 = st.columns(3)
-    after_cost = (filtered["Qty"] * filtered["Per Service"]).sum()
-    before_cost = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
-    delta_cost = after_cost - before_cost
-    c1.metric("Qty × Per Service (Before)", f"£{before_cost:,.2f}")
-    c2.metric("Qty × Per Service (After)", f"£{after_cost:,.2f}")
-    c3.metric("Qty × Per Service (Delta)", f"£{delta_cost:,.2f}")
-else:
-    st.info("Upload a volumes file (Qty) to see the Qty × Per Service totals and stylist summary.")
+    # Ensure numeric
+    for df_ in (filtered, filtered_base):
+        df_["Qty"] = pd.to_numeric(df_["Qty"], errors="coerce").fillna(0.0)
+        df_["Price"] = pd.to_numeric(df_["Price"], errors="coerce")
+        df_["Per Service"] = pd.to_numeric(df_["Per Service"], errors="coerce")
 
-# ---------------- Stylist summary (under KPIs) ----------------
+    rev_after = (filtered["Qty"] * filtered["Price"]).sum()
+    rev_before = (filtered_base["Qty"] * filtered_base["Price"]).sum()
+    rev_delta = rev_after - rev_before
+
+    cost_after = (filtered["Qty"] * filtered["Per Service"]).sum()
+    cost_before = (filtered_base["Qty"] * filtered_base["Per Service"]).sum()
+    cost_delta = cost_after - cost_before
+
+    margin_after = rev_after - cost_after
+    margin_before = rev_before - cost_before
+    margin_delta = margin_after - margin_before
+
+    # Rightmost KPI shows Margin impact (what you "make" after paying Per Service)
+    # Note: This is NOT the same as revenue (Qty × Price).
+    k4.metric(
+        "Margin impact (Before → After)",
+        f"£{margin_before:,.2f} → £{margin_after:,.2f}",
+        delta=f"{margin_delta:+,.2f}",
+        delta_color="normal",
+    )
+
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Qty × Price (Before)", f"£{rev_before:,.2f}")
+    r2.metric("Qty × Price (After)", f"£{rev_after:,.2f}")
+    r3.metric("Qty × Price (Delta)", f"£{rev_delta:,.2f}", delta=f"{rev_delta:+,.2f}", delta_color="normal")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Qty × Per Service (Before)", f"£{cost_before:,.2f}")
+    c2.metric("Qty × Per Service (After)", f"£{cost_after:,.2f}")
+    c3.metric("Qty × Per Service (Delta)", f"£{cost_delta:,.2f}", delta=f"{cost_delta:+,.2f}", delta_color="normal")
+else:
+    # Fallback when Qty isn't available (no volumes file)
+    after_profit = filtered["Difference"].sum()
+    before_profit = filtered_base["Difference"].sum()
+    delta_profit = after_profit - before_profit
+    k4.metric(
+        "Profit impact (Before → After)",
+        f"£{before_profit:,.2f} → £{after_profit:,.2f}",
+        delta=f"{delta_profit:+,.2f}",
+        delta_color="normal",
+    )
+    st.info("Upload a volumes file (Qty) to see revenue/cost/margin totals and stylist summary.")
+
+# Helpful indicator: overrides in effect
+overrides_active = 0
+if "service_overrides" in st.session_state:
+    ov = st.session_state["service_overrides"]
+    overrides_active = int(ov["Override Price"].notna().sum() + ov["Override Per Service"].notna().sum())
+if overrides_active:
+    st.warning(f"Overrides active: {overrides_active} cell(s) set in Service-level overrides (these affect totals).")
 st.subheader("Stylist summary (filtered)")
 
 if "Qty" in filtered.columns:
@@ -298,6 +341,8 @@ if "Qty" in filtered.columns:
         inplace=True,
     )
     summ = summ[["Stylist", "Qty * Price Total", "Price Difference", "Qty * Per Service Total", "Value Difference"]]
+    summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]] = summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]].round(2)
+
     summ = summ.sort_values("Stylist").reset_index(drop=True)
 
     st.dataframe(summ, use_container_width=True, height=420)
