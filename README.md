@@ -116,3 +116,7 @@ Upload a staff list with columns **Stylist, Salon, Type** to filter the dashboar
 
 ## v16.2
 - Fixed KPI section indentation (Streamlit IndentationError).
+
+
+## v16.3
+- Rebuilt Stylist Summary block to fix indentation error.

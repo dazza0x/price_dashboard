@@ -367,143 +367,57 @@ if overrides_active:
 
 st.subheader("Stylist summary (filtered)")
 
-
-
-# ---------------- Diagnostics: what changed? ----------------
-with st.expander("Diagnostics — what changed between Before and After?", expanded=False):
-    # Compare scenario vs baseline row-by-row (Services + Stylist)
-    key_cols = ["Services", "Stylist"]
-    left = filtered_base[key_cols + (["Qty"] if "Qty" in filtered_base.columns else []) + ["Price", "Per Service"]].copy()
-    right = filtered[key_cols + (["Qty"] if "Qty" in filtered.columns else []) + ["Price", "Per Service"]].copy()
-
-    left = left.rename(columns={"Price": "Price_Before", "Per Service": "PerService_Before"})
-    right = right.rename(columns={"Price": "Price_After", "Per Service": "PerService_After"})
-
-    comp = left.merge(right, on=key_cols + (["Qty"] if "Qty" in left.columns and "Qty" in right.columns else []), how="outer")
-
-    for c in ["Price_Before","Price_After","PerService_Before","PerService_After"]:
-        comp[c] = pd.to_numeric(comp[c], errors="coerce")
-
-    comp["Price_Diff"] = comp["Price_After"] - comp["Price_Before"]
-    comp["PerService_Diff"] = comp["PerService_After"] - comp["PerService_Before"]
-
-    if "Qty" in comp.columns:
-        comp["Qty"] = pd.to_numeric(comp["Qty"], errors="coerce").fillna(0.0)
-        comp["Rev_Delta"] = comp["Qty"] * comp["Price_Diff"]
-        comp["Cost_Delta"] = comp["Qty"] * comp["PerService_Diff"]
-        comp["Margin_Delta"] = comp["Rev_Delta"] - comp["Cost_Delta"]
-
-    changed = comp[(comp["Price_Diff"].fillna(0).abs() > 1e-9) | (comp["PerService_Diff"].fillna(0).abs() > 1e-9)].copy()
-    if len(changed) == 0:
-        st.success("No per-row changes detected (Before and After match for the filtered selection).")
-    else:
-        st.warning(f"{len(changed):,} row(s) have changes. This explains any non-zero deltas.")
-        show_cols = key_cols + (["Qty"] if "Qty" in comp.columns else []) + [
-            "Price_Before","Price_After","Price_Diff",
-            "PerService_Before","PerService_After","PerService_Diff",
-        ]
-        if "Qty" in comp.columns:
-            show_cols += ["Rev_Delta","Cost_Delta","Margin_Delta"]
-        changed = changed[show_cols].sort_values(["Stylist","Services"]).reset_index(drop=True)
-        st.dataframe(changed, use_container_width=True, height=420)
-
 if "Qty" in filtered.columns:
-    # Ensure numeric
-    for df_ in (filtered, filtered_base):
-        df_["Qty"] = pd.to_numeric(df_["Qty"], errors="coerce").fillna(0)
-        df_["Price"] = pd.to_numeric(df_["Price"], errors="coerce")
-        df_["Per Service"] = pd.to_numeric(df_["Per Service"], errors="coerce")
-
-    # Totals
-    filtered["QtyPriceTotal"] = filtered["Qty"] * filtered["Price"]
-    filtered_base["QtyPriceTotal"] = filtered_base["Qty"] * filtered_base["Price"]
-
-    filtered["QtyCostTotal"] = filtered["Qty"] * filtered["Per Service"]
-    filtered_base["QtyCostTotal"] = filtered_base["Qty"] * filtered_base["Per Service"]
-
-    after_by = filtered.groupby("Stylist", as_index=False).agg(
-        QtyPriceTotal=("QtyPriceTotal", "sum"),
-        QtyCostTotal=("QtyCostTotal", "sum"),
-    )
-    before_by = filtered_base.groupby("Stylist", as_index=False).agg(
-        QtyPriceTotal_Before=("QtyPriceTotal", "sum"),
-        QtyCostTotal_Before=("QtyCostTotal", "sum"),
+    summ = (
+        filtered.groupby("Stylist", dropna=False)
+        .apply(lambda x: pd.Series({
+            "Qty * Price Total": (x["Qty"] * x["Price"]).sum(),
+            "Qty * Per Service Total": (x["Qty"] * x["Per Service"]).sum(),
+        }))
+        .reset_index()
     )
 
-    summ = after_by.merge(before_by, on="Stylist", how="left")
-    summ["Price Difference"] = summ["QtyPriceTotal"] - summ["QtyPriceTotal_Before"]
-    summ["Value Difference"] = summ["QtyCostTotal"] - summ["QtyCostTotal_Before"]
-
-    # Rename columns to requested names
-    summ.rename(
-        columns={
-            "QtyPriceTotal": "Qty * Price Total",
-            "QtyCostTotal": "Qty * Per Service Total",
-        },
-        inplace=True,
+    base_summ = (
+        filtered_base.groupby("Stylist", dropna=False)
+        .apply(lambda x: pd.Series({
+            "Qty * Price Total (Base)": (x["Qty"] * x["Price"]).sum(),
+            "Qty * Per Service Total (Base)": (x["Qty"] * x["Per Service"]).sum(),
+        }))
+        .reset_index()
     )
-    summ = summ.merge(rent_days_df[["Stylist","Total Rent"]], on="Stylist", how="left")
-summ["Total Rent"] = summ["Total Rent"].fillna(0.0)
-summ["Salon Income Total"] = summ["Qty * Per Service Total"] + summ["Total Rent"]
-summ["Income Difference"] = summ["Value Difference"]  # rent constant unless you change rent inputs
-summ = summ[["Stylist", "Qty * Price Total", "Price Difference", "Qty * Per Service Total", "Value Difference", "Total Rent", "Salon Income Total", "Income Difference"]]
-    summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference","Total Rent","Salon Income Total","Income Difference"]] = summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference","Total Rent","Salon Income Total","Income Difference"]].round(2)
 
-    #  summ[["Qty * Price Total","Price Difference","Qty * Per Service Total","Value Difference"]].round(2)
+    summ = summ.merge(base_summ, on="Stylist", how="left").fillna(0.0)
+
+    summ["Price Difference"] = summ["Qty * Price Total"] - summ["Qty * Price Total (Base)"]
+    summ["Value Difference"] = summ["Qty * Per Service Total"] - summ["Qty * Per Service Total (Base)"]
+
+    # Add Chair Rent
+    rent_map = rent_days_df.set_index("Stylist")["Total Rent"].to_dict()
+    summ["Total Rent"] = summ["Stylist"].map(rent_map).fillna(0.0)
+
+    summ["Salon Income Total"] = summ["Qty * Per Service Total"] + summ["Total Rent"]
+    summ["Income Difference"] = summ["Value Difference"]  # rent constant unless changed
+
+    summ = summ[[
+        "Stylist",
+        "Qty * Price Total",
+        "Price Difference",
+        "Qty * Per Service Total",
+        "Value Difference",
+        "Total Rent",
+        "Salon Income Total",
+        "Income Difference",
+    ]]
+
+    # Round currency columns
+    currency_cols = summ.columns.drop("Stylist")
+    summ[currency_cols] = summ[currency_cols].round(2)
 
     summ = summ.sort_values("Stylist").reset_index(drop=True)
 
-    st.dataframe(summ, use_container_width=True, height=420)
+    st.dataframe(summ, use_container_width=True, height=400)
+
 else:
-    st.info("No volumes file loaded — stylist summary requires Qty.")
+    st.info("Upload a volumes file (Qty) to see stylist summary.")
 
-# ---------------- Scenario table view ----------------
-st.caption(f"Showing {len(filtered):,} / {len(result):,} rows after filters.")
-st.dataframe(filtered, use_container_width=True, height=520)
 
-# ---------------- Validation ----------------
-with st.expander("Validation checks"):
-    if validations.get("missing_cost_services"):
-        st.warning(f"{len(validations['missing_cost_services']):,} service(s) in prices are missing Per Service cost.")
-        st.dataframe(pd.DataFrame({"Services": validations["missing_cost_services"]}), use_container_width=True)
-    else:
-        st.success("All priced services have a Per Service cost.")
-
-    if validations.get("missing_price_services"):
-        st.warning(f"{len(validations['missing_price_services']):,} service(s) exist in costs but not in prices.")
-        st.dataframe(pd.DataFrame({"Services": validations["missing_price_services"]}), use_container_width=True)
-    else:
-        st.success("All costed services exist in prices.")
-
-    if qty_df is not None:
-        if validations.get("qty_unmatched_services"):
-            st.warning(f"{len(validations['qty_unmatched_services']):,} service(s) in volumes could not be matched.")
-            st.dataframe(pd.DataFrame({"Services": validations["qty_unmatched_services"]}), use_container_width=True)
-        else:
-            st.success("All volume services matched.")
-    else:
-        st.info("No volumes file uploaded; weighted checks disabled.")
-
-# ---------------- Download ----------------
-st.subheader("Download")
-
-out = io.BytesIO()
-with pd.ExcelWriter(out, engine="openpyxl") as writer:
-    result.to_excel(writer, index=False, sheet_name="Scenario Output")
-    filtered.to_excel(writer, index=False, sheet_name="Filtered View")
-    if "Qty" in filtered.columns:
-        summ.to_excel(writer, index=False, sheet_name="Stylist Summary")
-    st.session_state["service_overrides"].to_excel(writer, index=False, sheet_name="Service Overrides")
-    price_matrix.to_excel(writer, index=False, sheet_name="Input_StylistPrices")
-    service_cost.to_excel(writer, index=False, sheet_name="Input_ServiceCost")
-    rent_days_df.to_excel(writer, index=False, sheet_name="Input_ChairRent")
-    if qty_df is not None:
-        qty_df.to_excel(writer, index=False, sheet_name="Input_Volumes")
-
-out.seek(0)
-st.download_button(
-    "Download scenario output (.xlsx)",
-    data=out,
-    file_name="Touche Pricing Scenario.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
