@@ -94,6 +94,11 @@ def _reset_scenario():
     st.session_state["global_price_adj"] = 0.0
     st.session_state["global_cost_mode"] = "Percent"
     st.session_state["global_cost_adj"] = 0.0
+    st.session_state["rent_plus"] = 0.0
+    # Clear all per-stylist days keys
+    for k in list(st.session_state.keys()):
+        if k.startswith("rent_days_"):
+            st.session_state[k] = 0.0
     for k in [
         "filter_services", "filter_stylists", "filter_qty_range",
         "filter_cost_range", "filter_hide_zero_qty", "filter_hide_missing_cost",
@@ -231,27 +236,36 @@ st.markdown("### 🪑 Chair Rent")
 if "rent_plus" not in st.session_state:
     st.session_state["rent_plus"] = 0.0
 
-rc1, rc2 = st.columns([1, 3])
-with rc1:
-    rent_plus = st.number_input("Daily rate (£ per day)", step=1.0, key="rent_plus")
+# Initialise a stable per-stylist days key for each stylist (never reset on rerun)
+for s in stylists:
+    _k = f"rent_days_{s}"
+    if _k not in st.session_state:
+        st.session_state[_k] = 0.0
 
-default_rent_days = pd.DataFrame({"Stylist": stylists, "Days": 0.0})
-if "rent_days" not in st.session_state:
-    st.session_state["rent_days"] = default_rent_days
+rent_plus = st.number_input("Daily rate (£ per day)", step=1.0, key="rent_plus")
 
-with rc2:
-    st.caption("Enter the number of days worked per stylist to compute chair rent.")
-    st.session_state["rent_days"] = st.data_editor(
-        st.session_state["rent_days"],
-        use_container_width=True,
-        hide_index=True,
-        key="rent_days_editor",
-        height=min(200, 38 + len(stylists) * 35),
-    )
+st.caption("Enter days worked per stylist — press **Tab** or **Enter** to move to the next.")
 
-rent_days_df = st.session_state["rent_days"].copy()
-rent_days_df["Stylist"]    = rent_days_df["Stylist"].astype(str).str.strip()
-rent_days_df["Days"]       = pd.to_numeric(rent_days_df["Days"], errors="coerce").fillna(0.0)
+# Render in rows of 4 inputs so the form stays compact regardless of stylist count
+_cols_per_row = 4
+for i in range(0, len(stylists), _cols_per_row):
+    _row_stylists = stylists[i : i + _cols_per_row]
+    _cols = st.columns(len(_row_stylists))
+    for col, stylist in zip(_cols, _row_stylists):
+        with col:
+            st.number_input(
+                stylist,
+                min_value=0.0,
+                step=0.5,
+                key=f"rent_days_{stylist}",
+                label_visibility="visible",
+            )
+
+# Build the rent dataframe from the stable session_state keys
+rent_days_df = pd.DataFrame({
+    "Stylist":    stylists,
+    "Days":       [float(st.session_state.get(f"rent_days_{s}", 0.0)) for s in stylists],
+})
 rent_days_df["Total Rent"] = (rent_days_df["Days"] * float(rent_plus)).round(2)
 
 st.markdown("---")
