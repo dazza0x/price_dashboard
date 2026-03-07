@@ -590,16 +590,17 @@ if has_qty:
     summ = summ.merge(base_summ, on="Stylist", how="left").fillna(0.0)
 
     rent_map = rent_days_df.set_index("Stylist")["Total Rent"].to_dict()
-    summ["Chair Rent"]       = summ["Stylist"].map(rent_map).fillna(0.0)
-    summ["Salon Income"]     = summ["Service Charges (After)"] + summ["Chair Rent"]
-    summ["Revenue Δ"]        = summ["Revenue (After)"]         - summ["Revenue (Before)"]
-    summ["Service Charges Δ"]= summ["Service Charges (After)"] - summ["Service Charges (Before)"]
+    summ["Chair Rent"]        = summ["Stylist"].map(rent_map).fillna(0.0)
+    summ["Salon Income"]      = summ["Service Charges (After)"] + summ["Chair Rent"]
+    summ["Stylist Income"]    = summ["Revenue (After)"] - summ["Salon Income"]
+    summ["Revenue Δ"]         = summ["Revenue (After)"]          - summ["Revenue (Before)"]
+    summ["Service Charges Δ"] = summ["Service Charges (After)"]  - summ["Service Charges (Before)"]
 
     summ = summ[[
         "Stylist",
-        "Revenue (Before)", "Revenue (After)",  "Revenue Δ",
+        "Revenue (Before)", "Revenue (After)", "Revenue Δ",
         "Service Charges (Before)", "Service Charges (After)", "Service Charges Δ",
-        "Chair Rent", "Salon Income",
+        "Chair Rent", "Salon Income", "Stylist Income",
     ]]
     currency_cols = summ.columns.drop("Stylist")
     summ[currency_cols] = summ[currency_cols].round(2)
@@ -609,7 +610,7 @@ if has_qty:
         summ.style.format({c: "£{:,.2f}" for c in currency_cols})
                   .applymap(lambda v: "color: #10b981; font-weight:600" if isinstance(v, (int,float)) and v > 0
                             else ("color: #ef4444; font-weight:600" if isinstance(v,(int,float)) and v < 0 else ""),
-                            subset=["Revenue Δ","Service Charges Δ"]),
+                            subset=["Revenue Δ", "Service Charges Δ", "Stylist Income"]),
         use_container_width=True,
         height=min(500, 60 + len(summ) * 35),
     )
